@@ -468,8 +468,7 @@ def test_cooldown_lengths_match_error_kind():
 
 def _offline_engine():
     from contextos.server import Engine
-    d = tempfile.mkdtemp()
-    return Engine(os.path.join(d, "e.db"), {}, offline=True)
+    return Engine(tempfile.mkdtemp(), {}, offline=True)
 
 
 def test_engine_routes_by_difficulty():
@@ -520,12 +519,249 @@ def test_degenerate_reply_detection():
                              "columns, keys, and constraints for the bookings table.")
 
 
+def test_chat_store_crud_search_and_truncate():
+    from contextos.chats import ChatStore, title_from
+    cs = ChatStore(os.path.join(tempfile.mkdtemp(), "c.db"))
+    c = cs.create()
+    a = cs.add(c["id"], "user", "hello there")
+    cs.add(c["id"], "assistant", "hi", {"provider": "groq"})
+    b = cs.add(c["id"], "user", "tell me about PostgreSQL")
+    cs.add(c["id"], "assistant", "it is a database")
+    assert [m["seq"] for m in cs.messages(c["id"])] == [1, 2, 3, 4]
+    assert cs.messages(c["id"])[1]["meta"] == {"provider": "groq"}
+    assert cs.list("postgres")[0]["id"] == c["id"] and cs.list("nope") == []
+    removed = cs.truncate_from(c["id"], b["id"])
+    assert len(removed) == 2 and len(cs.messages(c["id"])) == 2
+    assert cs.rename(c["id"], "  My chat ") and cs.get(c["id"])["title"] == "My chat"
+    assert cs.delete(c["id"]) and cs.get(c["id"]) is None
+    assert cs.messages(c["id"]) == []                  # cascade removed messages
+    assert title_from("one two three four five six seven eight") == \
+        "one two three four five six seven…"
+    assert a["id"]
+
+
+def test_visible_text_hides_blocks_and_partial_tags():
+    from contextos.server import visible_text as v
+    assert v("<context>\nfact | /task/x | 1\n</context>\nHello") == "Hello"
+    assert v("<context>\nfact | /task/x | 1") == ""          # block still arriving
+    assert v("Hello <con") == "Hello"                          # tag may be starting
+    assert v("<think>plan</think>Answer") == "Answer"
+    assert v("a < b and c") == "a < b and c"                  # ordinary text survives
+
+
+def test_stream_events_and_persisted_transcript():
+    e = _offline_engine()
+    evs = list(e.chat_stream(None, "Design a schema for bookings"))
+    kinds = [x["type"] for x in evs]
+    assert kinds[:3] == ["start", "route", "model"] and kinds[-1] == "done"
+    text = "".join(x["text"] for x in evs if x["type"] == "delta")
+    done = evs[-1]["message"]
+    assert text == done["content"] and "<context>" not in text
+    cid = evs[0]["conversation"]["id"]
+    conv = e.chats.get(cid)
+    assert conv["title"] == "Design a schema for bookings"
+    assert [m["role"] for m in conv["messages"]] == ["user", "assistant"]
+    assert done["meta"]["written"] and e.memory(cid)["units"]
+
+
+def test_midstream_failure_resets_and_hands_off():
+    e = _offline_engine()
+    real = e._stream
+
+    def flaky(name, system, user):
+        if name == "offline-a":
+            yield "Partial answer that"
+            raise _live.ProviderError("HTTP 503: high demand")
+        yield from real(name, system, user)
+    e._stream = flaky
+    evs = list(e.chat_stream(None, "Design a schema and explain why"))
+    kinds = [x["type"] for x in evs]
+    assert "reset" in kinds and "switch" in kinds
+    assert kinds.index("reset") < kinds.index("switch")
+    assert evs[-1]["message"]["meta"]["provider"] == "offline-b"
+
+
+def test_garbled_stream_falls_back():
+    e = _offline_engine()
+    real = e._stream
+
+    def junk(name, system, user):
+        if name == "offline-a":
+            yield "!" * 80
+            return
+        yield from real(name, system, user)
+    e._stream = junk
+    evs = list(e.chat_stream(None, "Design a schema and explain why"))
+    assert evs[-1]["message"]["meta"]["provider"] == "offline-b"
+    assert "garbled" in evs[-1]["message"]["meta"]["attempts"][0]["error"]
+
+
+def test_regenerate_and_edit_undo_store_writes():
+    e = _offline_engine()
+    first = list(e.chat_stream(None, "Design the booking schema"))
+    cid = first[0]["conversation"]["id"]
+    reply = first[-1]["message"]
+    added = [w["address"] for w in reply["meta"]["written"] if w["created"]]
+    assert added and all(e.ctx_for(cid).get(a) for a in added)
+    regen = list(e.chat_stream(cid, regenerate=reply["id"]))
+    assert regen[-1]["type"] == "done"
+    assert [m["role"] for m in e.chats.messages(cid)] == ["user", "assistant"]
+    user_id = e.chats.messages(cid)[0]["id"]
+    list(e.chat_stream(cid, "Design the invoices schema instead", edit=user_id))
+    msgs = e.chats.messages(cid)
+    assert [m["content"] for m in msgs if m["role"] == "user"] == \
+        ["Design the invoices schema instead"]
+    addrs = {u["address"] for u in e.memory(cid)["units"]}
+    assert not any("booking" in a for a in addrs if a.startswith("/project/notes"))
+    assert e.ctx_for(cid).get("/task/goal").value == "Design the invoices schema instead"
+    assert e.chats.get(cid)["title"] == "Design the invoices schema instead"
+    e.chats.rename(cid, "My own title")                  # a title the user chose stays
+    list(e.chat_stream(cid, "Design the payments schema",
+                       edit=e.chats.messages(cid)[0]["id"]))
+    assert e.chats.get(cid)["title"] == "My own title"
+
+
+def test_stop_keeps_partial_reply_without_committing():
+    e = _offline_engine()
+    gen = e.chat_stream(None, "Design a schema for bookings")
+    cid = None
+    for ev in gen:
+        cid = cid or ev.get("conversation", {}).get("id")
+        if ev["type"] == "delta":
+            break
+    gen.close()                                     # what a browser Stop does
+    last = e.chats.messages(cid)[-1]
+    assert last["role"] == "assistant" and last["meta"]["stopped"]
+    assert not any(u["address"].startswith("/project/notes")
+                   for u in e.memory(cid)["units"])
+
+
+def test_conversations_have_separate_memory_and_delete_cleanly():
+    e = _offline_engine()
+    a = list(e.chat_stream(None, "Design the booking schema"))[0]["conversation"]["id"]
+    b = list(e.chat_stream(None, "Plan the invoice module"))[0]["conversation"]["id"]
+    goals = {e.ctx_for(c).get("/task/goal").value for c in (a, b)}
+    assert goals == {"Design the booking schema", "Plan the invoice module"}
+    assert e.delete_conversation(a)
+    assert not (e.data / "ctx" / f"{a}.db").exists()
+    assert [c["id"] for c in e.chats.list()] == [b]
+
+
+def test_reasoning_streams_as_thinking_events():
+    import time as _t
+    e = _offline_engine()
+
+    def thinker(name, system, user):
+        yield ("think", "Let me work this out. ")
+        _t.sleep(0.02)
+        yield ("think", "Discount first, then tax.")
+        yield "The answer is **849.6**."
+    e._stream = thinker
+    evs = list(e.chat_stream(None, "hi"))
+    thinking = "".join(x["text"] for x in evs if x["type"] == "thinking")
+    assert thinking == "Let me work this out. Discount first, then tax."
+    done = evs[-1]["message"]
+    assert done["content"] == "The answer is **849.6**." and done["meta"]["thought_ms"] > 0
+
+
+def test_route_pin_goes_first():
+    e = _offline_engine()
+    r = e.chat("hi", route="offline-c")
+    assert r["provider"] == "offline-c"
+
+
+def _http_server():
+    import threading
+    from http.server import ThreadingHTTPServer
+    from contextos.server import Engine, Handler
+    Handler.engine = Engine(tempfile.mkdtemp(), {}, offline=True)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    httpd.daemon_threads = True
+    Handler.port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, f"http://127.0.0.1:{Handler.port}"
+
+
+def _req(url, body=None, headers=None):
+    import json as _j
+    import urllib.request
+    h = {"Content-Type": "application/json", **(headers or {})}
+    data = None if body is None else _j.dumps(body).encode()
+    return urllib.request.urlopen(urllib.request.Request(url, data=data, headers=h),
+                                  timeout=10)
+
+
+def test_http_chat_flow_end_to_end():
+    import json as _j
+    httpd, base = _http_server()
+    try:
+        assert b"<html" in _req(base + "/").read().lower()
+        cid = _j.load(_req(base + "/api/conversations", {}))["id"]
+        lines = _req(base + "/api/chat", {"conversation_id": cid,
+                                          "prompt": "Design a bookings schema"}).read()
+        evs = [_j.loads(x) for x in lines.decode().splitlines()]
+        assert evs[0]["type"] == "start" and evs[-1]["type"] == "done"
+        conv = _j.load(_req(base + f"/api/conversations/{cid}"))
+        assert len(conv["messages"]) == 2 and conv["title"] == "Design a bookings schema"
+        assert _j.load(_req(base + f"/api/conversations/{cid}/memory"))["units"]
+        _req(base + f"/api/conversations/{cid}/rename", {"title": "Bookings"})
+        listed = _j.load(_req(base + "/api/conversations?q=Book"))["conversations"]
+        assert listed[0]["title"] == "Bookings"
+        assert b"**You:**" in _req(base + f"/api/conversations/{cid}/export").read()
+        assert _j.load(_req(base + f"/api/conversations/{cid}/delete", {}))["deleted"]
+    finally:
+        httpd.shutdown()
+
+
+def test_http_rejects_other_origins_and_non_json():
+    import urllib.error
+    httpd, base = _http_server()
+    try:
+        for hdrs in ({"Origin": "https://evil.example"},
+                     {"Content-Type": "text/plain"}):
+            try:
+                _req(base + "/api/conversations", {}, hdrs)
+                raise AssertionError(f"accepted {hdrs}")
+            except urllib.error.HTTPError as e:
+                assert e.code == 403
+    finally:
+        httpd.shutdown()
+
+
+def test_http_stop_mid_stream_saves_partial():
+    import json as _j
+    import socket
+    import time as _t
+    from contextos.server import Handler
+    httpd, base = _http_server()
+    try:
+        cid = _j.load(_req(base + "/api/conversations", {}))["id"]
+        body = _j.dumps({"conversation_id": cid,
+                         "prompt": "Design a bookings schema"}).encode()
+        s = socket.create_connection(("127.0.0.1", Handler.port))
+        s.sendall(b"POST /api/chat HTTP/1.0\r\nHost: 127.0.0.1\r\n"
+                  b"Content-Type: application/json\r\nContent-Length: "
+                  + str(len(body)).encode() + b"\r\n\r\n" + body)
+        buf = b""
+        while b'"delta"' not in buf:
+            buf += s.recv(4096)
+        s.close()                                   # the browser's Stop button
+        for _ in range(100):
+            msgs = Handler.engine.chats.messages(cid)
+            if len(msgs) == 2:
+                break
+            _t.sleep(0.05)
+        assert msgs[-1]["meta"].get("stopped")
+    finally:
+        httpd.shutdown()
+
+
 def test_engine_reads_lane_order_from_env():
     from contextos.server import Engine
     d = tempfile.mkdtemp()
     env = {"GROQ_API_KEY": "k", "MISTRAL_API_KEY": "k",
            "LLM_SMART_ORDER": "mistral,groq,nvidia", "LLM_FAST_ORDER": "groq-fast"}
-    e = Engine(os.path.join(d, "e.db"), env, offline=False)
+    e = Engine(d, env, offline=False)
     assert e.smart == ["mistral", "groq"]        # nvidia has no key: skipped
     assert e.fast == ["groq-fast"]
 

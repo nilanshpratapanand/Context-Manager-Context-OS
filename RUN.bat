@@ -38,15 +38,15 @@ echo   Using: %PY%
 echo   Folder: %cd%
 echo.
 echo   ---- DASHBOARD (start here) --------------------------------
-echo   1.  Dashboard - REAL models       uses the keys in .env
-echo   T.  Test my providers             one real call each, 5 seconds
+echo   1.  Chat - REAL models            uses the keys in .env
+echo   T.  Test my providers             one real call to each model
 echo   M.  List usable models            ask providers what your keys allow
-echo   2.  Dashboard - no keys           simulated, only if 1 fails
+echo   2.  Chat - no keys                simulated, only if 1 fails
 echo.
 echo   ---- see the research ----------------------------------
 echo   3.  Demo              the whole story in the terminal
 echo   4.  Benchmark         offline sufficiency table
-echo   5.  Tests             39 tests, proves it works
+echo   5.  Tests             64 tests, proves it works
 echo.
 echo   ---- live models -------------------------------------------
 echo   6.  Check API keys    which keys .env actually has
@@ -56,7 +56,7 @@ echo.
 echo   ---- play with it ------------------------------------------
 echo   9.  Sample project    seed a store and try a handoff
 echo   C.  Command prompt    run contextos commands yourself
-echo   R.  Reset             delete the local databases
+echo   R.  Reset             delete ALL chats and local databases
 echo.
 echo   0.  Exit
 echo.
@@ -111,12 +111,12 @@ goto done
 
 :dashoff
 cls
-echo Starting the dashboard with simulated replies - no API keys used.
+echo Starting the chat with simulated replies - no API keys used.
 echo Your browser will open at http://127.0.0.1:8000
 echo.
 echo Try this once it loads:
 echo   1. Type a task, for example "build OAuth2 login, no new dependencies"
-echo   2. Click a provider in the right sidebar to make it fail
+echo   2. Open "Models" at the bottom left and click a model to make it fail
 echo   3. Send another message - watch it switch models and carry on
 echo.
 echo Press Ctrl+C in this window to stop the server.
@@ -131,7 +131,7 @@ if not exist ".env" (
   echo Then pick option 1 again. Or use option 2, which needs no keys.
   goto done
 )
-echo Starting the dashboard with your real providers from .env.
+echo Starting the chat with your real providers from .env.
 echo Your browser will open at http://127.0.0.1:8000
 echo.
 echo This makes real API calls. Press Ctrl+C in this window to stop.
@@ -252,6 +252,11 @@ for %%f in (contextos.db dashboard.db) do (
     echo Deleted %%f
     set "gone=1"
   )
+)
+if exist "chat_data" (
+  rmdir /s /q "chat_data"
+  echo Deleted chat_data - all chats and their memory
+  set "gone=1"
 )
 if "!gone!"=="0" echo No databases to delete.
 goto done

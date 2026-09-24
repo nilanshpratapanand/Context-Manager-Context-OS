@@ -35,7 +35,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from . import ContextOS
 from .budget import render
@@ -74,6 +74,9 @@ class Provider:
     style: str = "openai"          # "openai" | "gemini" | "anthropic"
     tier: float = 0.5              # rough capability; picks the handoff direction
     lane: str = "smart"            # "smart" | "fast" - see router.py
+    # Extra request fields. gpt-oss models spend their whole output budget
+    # thinking unless told how hard to think (measured: 2046/2048 tokens).
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def available(self, env: dict[str, str]) -> bool:
         return bool(env.get(self.key_env))
@@ -96,9 +99,10 @@ _COHERE = "https://api.cohere.ai/compatibility/v1/chat/completions"
 PROVIDERS: dict[str, Provider] = {
     # Groq: no card, 30 RPM / 1,000 RPD per model. Fastest. Llama was removed
     # from the free plan in 2026; gpt-oss is what remains.
-    "groq": Provider("groq", "GROQ_API_KEY", "openai/gpt-oss-120b", _GROQ, tier=0.8),
+    "groq": Provider("groq", "GROQ_API_KEY", "openai/gpt-oss-120b", _GROQ, tier=0.8,
+                     extra={"reasoning_effort": "medium"}),
     "groq-fast": Provider("groq-fast", "GROQ_API_KEY", "openai/gpt-oss-20b", _GROQ,
-                          tier=0.6, lane="fast"),
+                          tier=0.6, lane="fast", extra={"reasoning_effort": "low"}),
     # Google AI Studio: no card. Flash only - Pro moved behind billing.
     "gemini": Provider("gemini", "GEMINI_API_KEY", "gemini-flash-latest", _GEMINI,
                        style="gemini", tier=0.85),
@@ -120,10 +124,10 @@ PROVIDERS: dict[str, Provider] = {
                             tier=0.55, lane="fast"),
     # Cloudflare Workers AI: no card, 10,000 neurons/day. URL carries the account id.
     "cloudflare": Provider("cloudflare", "CLOUDFLARE_API_KEY", "@cf/openai/gpt-oss-120b",
-                           _CLOUDFLARE, tier=0.8),
+                           _CLOUDFLARE, tier=0.8, extra={"reasoning_effort": "medium"}),
     "cloudflare-fast": Provider("cloudflare-fast", "CLOUDFLARE_API_KEY",
                                 "@cf/openai/gpt-oss-20b", _CLOUDFLARE, tier=0.6,
-                                lane="fast"),
+                                lane="fast", extra={"reasoning_effort": "low"}),
     # Mistral: no card, free plan, trains on your data by default. Often 429s.
     "mistral": Provider("mistral", "MISTRAL_API_KEY", "mistral-medium-latest", _MISTRAL,
                         tier=0.75),
@@ -207,7 +211,7 @@ def _post(url: str, payload: dict[str, Any], headers: dict[str, str],
 
 # Bump this whenever live.py changes in a way you need to confirm reached the
 # user's machine. It is printed by --check.
-BUILD = "2026-09-24-two-lane-routing"
+BUILD = "2026-09-24-streaming-chat"
 
 _THINK = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
 
@@ -237,7 +241,7 @@ def complete(provider: Provider, system: str, user: str, env: dict[str, str], *,
             "model": model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
-            "max_tokens": max_tokens, "temperature": temperature,
+            "max_tokens": max_tokens, "temperature": temperature, **provider.extra,
         }, {"Authorization": f"Bearer {key}"}, timeout)
         text = data["choices"][0]["message"]["content"] or ""
         used = (data.get("usage") or {}).get("prompt_tokens", 0)
@@ -265,6 +269,117 @@ def complete(provider: Provider, system: str, user: str, env: dict[str, str], *,
         used = (data.get("usageMetadata") or {}).get("promptTokenCount", 0)
 
     return strip_reasoning(text), int(used or count_tokens(system + user))
+
+
+def _sse_lines(url: str, payload: dict[str, Any], headers: dict[str, str],
+               timeout: int) -> Iterator[str]:
+    """Yield the payload of each `data:` line of a server-sent-event stream."""
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json",
+                                          "Accept": "text/event-stream",
+                                          **{k: v for k, v in BROWSER_HEADERS.items()
+                                             if k != "Accept"}, **headers})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if line.startswith("data:"):
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    if data:
+                        yield data
+    except urllib.error.HTTPError as e:
+        detail = e.read(600).decode("utf-8", "replace")
+        raise ProviderError(f"HTTP {e.code}: {detail[:300]}") from None
+    except urllib.error.URLError as e:
+        raise ProviderError(f"network: {e.reason}") from None
+    except (TimeoutError, OSError) as e:
+        raise ProviderError(f"network: {type(e).__name__}: {e}") from None
+
+
+def stream_events(provider: Provider, system: str, user: str, env: dict[str, str], *,
+                  max_tokens: int = 4096, temperature: float = 0.7,
+                  timeout: int = 60) -> Iterator[tuple[str, str]]:
+    """Yield ("text", chunk) for the answer and ("think", chunk) for reasoning the
+    provider streams separately, as the provider produces them.
+
+    Text is unfiltered: <think> and <context> blocks inside it are the caller's
+    to hide. Any failure, before or mid-stream, is a ProviderError.
+    """
+    key = env.get(provider.key_env)
+    if not key:
+        raise ProviderError(f"{provider.key_env} is not set")
+    model = env.get(MODEL_ENV_OVERRIDE.get(provider.name, ""), provider.model)
+
+    if provider.style == "gemini":
+        url = f"{provider.url}/{model}:streamGenerateContent?alt=sse&key={key}"
+        payload: dict[str, Any] = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {"temperature": temperature,
+                                 "maxOutputTokens": max_tokens}}
+        headers: dict[str, str] = {}
+    elif provider.style == "anthropic":
+        url = resolve_url(provider, env)
+        payload = {"model": model, "system": system, "max_tokens": max_tokens,
+                   "temperature": temperature, "stream": True,
+                   "messages": [{"role": "user", "content": user}]}
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    else:
+        url = resolve_url(provider, env)
+        # No stream_options: Cohere's compatibility API rejects the field.
+        payload = {"model": model, "stream": True,
+                   "messages": [{"role": "system", "content": system},
+                                {"role": "user", "content": user}],
+                   "max_tokens": max_tokens, "temperature": temperature,
+                   **provider.extra}
+        headers = {"Authorization": f"Bearer {key}"}
+
+    finish = None
+    thought = texted = 0
+    for data in _sse_lines(url, payload, headers, timeout):
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("error") or obj.get("type") == "error":
+            err = obj.get("error") or obj
+            raise ProviderError(f"stream error: {json.dumps(err)[:300]}")
+        if provider.style == "gemini":
+            for cand in obj.get("candidates") or []:
+                finish = cand.get("finishReason") or finish
+                for part in (cand.get("content") or {}).get("parts") or []:
+                    if part.get("text"):
+                        kind = "think" if part.get("thought") else "text"
+                        thought += kind == "think"
+                        texted += kind == "text"
+                        yield kind, part["text"]
+        elif provider.style == "anthropic":
+            delta = obj.get("delta") or {}
+            if obj.get("type") == "content_block_delta":
+                if delta.get("text"):
+                    texted += 1
+                    yield "text", delta["text"]
+                elif delta.get("thinking"):
+                    thought += 1
+                    yield "think", delta["thinking"]
+            finish = delta.get("stop_reason") or finish
+        else:
+            for ch in obj.get("choices") or []:
+                delta = ch.get("delta") or {}
+                finish = ch.get("finish_reason") or finish
+                think = delta.get("reasoning") or delta.get("reasoning_content")
+                if think:
+                    thought += 1
+                    yield "think", think
+                if delta.get("content"):
+                    texted += 1
+                    yield "text", delta["content"]
+    # Hit the cap after answering is a long answer; hitting it before any answer
+    # means the whole budget went on thinking - worth falling back over.
+    if finish in ("length", "MAX_TOKENS", "max_tokens") and thought and not texted:
+        raise ProviderError("ran out of output tokens while still reasoning")
 
 
 def _get(url: str, headers: dict[str, str], timeout: int = 30) -> Any:

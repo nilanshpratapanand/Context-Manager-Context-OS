@@ -6,28 +6,52 @@ When a task moves from one model to another, what should travel — and what sho
 ContextOS is an addressable, bi-temporal context store that answers that question with a
 direction-aware handoff packet, and tells the receiving model what it deliberately left out.
 
-## Dashboard
+## Chat app
 
 ```bash
-python -m contextos.server --offline     # no API keys needed
 python -m contextos.server               # uses the keys in .env
+python -m contextos.server --offline     # no API keys, simulated replies
 ```
 
-Opens at `http://127.0.0.1:8000`. You type a prompt; the server does the rest:
+Opens at `http://127.0.0.1:8000`: a normal chat interface with a context store behind
+every conversation.
 
-1. selects **only the relevant context** from the store — never the whole history
-2. calls the current provider with it
-3. if that provider is rate-limited or fails, classifies the direction, builds a
-   handoff packet, switches provider, and retries — the task carries on
-4. extracts durable state from the reply (`decision`, `constraint`, `blocker`, …) and
-   commits it back to an address
+- **Chats.** A sidebar lists saved conversations by date, with auto titles, search,
+  rename and delete. Chats live in `chat_data/`; simulated ones are kept apart in
+  `chat_data/offline/`.
+- **Streaming.** Replies appear word by word, and models that reason show a
+  collapsible *Thinking…* section. There's a Stop button (or <kbd>Esc</kbd>).
+  Auto-scroll stops while you read further up.
+- **Messages.** Markdown, tables, code blocks with Copy and syntax highlighting, and
+  maths via KaTeX. Highlighting and KaTeX load from a CDN when online; without them
+  the page still works. Copy, Regenerate and Edit, plus a details strip per reply:
+  model, lane, difficulty, context tokens sent, handoffs and facts saved.
+- **Lane and model.** *Auto / Smart / Fast* in the header, or `/smart` and `/fast` at
+  the start of a message. A model picker says which model to try first.
+- **Memory panel.** What this chat's store holds. Delete anything wrong, and preview
+  the handoff packet a new model would get.
+- **Models panel.** Status and rest timers for every model, a "test every model"
+  button, and click-to-fail for demonstrating handoffs.
+- Light and dark themes, a phone layout, and keyboard shortcuts: <kbd>Ctrl</kbd>+<kbd>K</kbd>
+  search, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> new chat.
 
-Conversation history is capped at a few turns on purpose. **History is not the memory —
-the store is.** The sidebar shows the store filling up live, the token budget actually
-being spent, and every model switch as it happens.
+For every message the server:
 
-Click any provider in the sidebar to force it to fail, then send another message. That's
-the demo: the model changes, the task doesn't.
+1. scores its difficulty and picks the smart or fast lane
+2. selects **only the relevant context** from that chat's store, never the whole history
+3. streams the reply from the first working model in the lane
+4. if that model fails, even mid-reply, classifies the direction, builds a handoff
+   packet and continues on the next model
+5. saves the durable state the reply declared (`decision`, `constraint`, `fact`, …)
+   back to an address
+
+**The transcript is for display. The store is the memory.** Each turn a model gets the
+relevant stored items plus the last exchange. Regenerate and Edit undo the store
+writes of the replies they replace, so memory always matches the visible chat. A
+stopped reply saves no state.
+
+The server only accepts requests from its own page: it checks the Host and Origin
+headers and requires JSON, so other websites can't use your keys through it.
 
 ### Two-lane routing (free models only)
 
@@ -309,11 +333,12 @@ contextos/handoff.py     direction-aware packets, difficulty gate
 contextos/router.py      two-lane routing: difficulty score, lane choice, cooldowns
 contextos/bench.py       sufficiency benchmark + 3 baselines
 contextos/mcp_server.py  MCP stdio server
-contextos/server.py      dashboard backend (stdlib http.server)
-contextos/dashboard.html the dashboard UI, one file
+contextos/server.py      chat engine + HTTP API: streaming, handoffs, per-chat stores
+contextos/chats.py       saved conversations (SQLite)
+contextos/dashboard.html the chat UI, one file, no build step
 contextos/cli.py         command line
 contextos/demo.py        end-to-end demo
-tests/                   36 tests, stdlib only
+tests/                   64 tests, stdlib only
 PLAN.md                  the research and the reasoning behind each decision
 ```
 
