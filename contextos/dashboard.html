@@ -65,6 +65,10 @@
   .dot.on{background:var(--good);box-shadow:0 0 7px #5ec27a88}
   .dot.dead{background:var(--bad)}
   .prov .name{font-weight:600}
+  .lane{font-size:10px;padding:1px 6px;border-radius:999px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+  .lane.smart{color:#c8a8ff;background:#2a2140;border:1px solid #4a3a70}
+  .lane.fast{color:#8fd8e8;background:#16303a;border:1px solid #2a5260}
+  .dot.cool{background:var(--warn)}
   .prov .model{color:var(--dim);font-size:11px;margin-left:auto;
     max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .unit{font-family:var(--mono);font-size:11.5px;padding:6px 8px;border-radius:6px;
@@ -123,7 +127,7 @@
       </div>
     </div>
     <form id="form">
-      <textarea id="input" placeholder="Ask something, or state a decision or a constraint…" rows="1"></textarea>
+      <textarea id="input" placeholder="Ask something, or state a decision or a constraint…  (start with /smart or /fast to pick the lane)" rows="1"></textarea>
       <button id="send">Send</button>
     </form>
   </div>
@@ -194,9 +198,11 @@ async function refresh(){
   $('#provs').innerHTML = s.providers.map(p => `
     <div class="card prov" data-p="${esc(p.name)}" style="cursor:pointer"
          title="Click to simulate this provider failing">
-      <span class="dot ${p.failed ? 'dead' : (p.current ? 'on' : '')}"></span>
+      <span class="dot ${p.failed ? 'dead' : p.cooldown ? 'cool' : (p.current ? 'on' : '')}"></span>
       <span class="name">${esc(p.name)}</span>
-      <span class="model">${p.failed ? 'forced failure' : esc(p.model)}</span>
+      <span class="lane ${esc(p.lane)}">${esc(p.lane)}</span>
+      <span class="model">${p.failed ? 'forced failure'
+        : p.cooldown ? `benched ${p.cooldown}s · ${esc(p.model)}` : esc(p.model)}</span>
     </div>`).join('') || '<div class="card">none</div>';
   document.querySelectorAll('[data-p]').forEach(el => el.onclick = async () => {
     await api('/api/fail', {provider: el.dataset.p}); refresh();
@@ -258,6 +264,8 @@ form.onsubmit = async ev => {
 
       const meta = [];
       meta.push(`<b>${esc(r.provider)}</b>`);
+      if(r.route) meta.push(`<span class="lane ${esc(r.route.lane)}">${esc(r.route.lane)}</span> ` +
+        `difficulty <b>${r.route.difficulty.toFixed(2)}</b> · ${esc(r.route.reasons.join(', '))}`);
       if(r.tokens) meta.push(`context sent <b>${r.tokens.sent}</b> of <b>${r.tokens.stored}</b> stored`);
       if(r.written?.length) meta.push(`committed <b>${r.written.length}</b>: ` +
         r.written.map(w => esc(w.address)).join(', '));

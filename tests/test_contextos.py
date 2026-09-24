@@ -404,5 +404,131 @@ def test_check_reports_every_provider():
     assert all(r["status"] == "no key" for r in rows)
 
 
+def test_read_timeout_becomes_provider_error():
+    """A slow provider must trigger fallback, not crash the turn."""
+    import urllib.request
+    real = urllib.request.urlopen
+
+    def slow(*a, **k):
+        raise TimeoutError("The read operation timed out")
+    urllib.request.urlopen = slow
+    try:
+        with raises(_live.ProviderError):
+            _live.complete(_live.PROVIDERS["groq"], "s", "u", {"GROQ_API_KEY": "x"})
+    finally:
+        urllib.request.urlopen = real
+
+
+from contextos import router as _router  # noqa: E402
+
+
+def test_router_sends_easy_prompts_to_fast_lane():
+    for p in ("hi", "thanks!", "What is the capital of France?",
+              "rephrase: we shipped it", "translate hello to hindi",
+              "what does API stand for"):
+        assert _router.decide(p).lane == "fast", p
+
+
+def test_router_sends_hard_prompts_to_smart_lane():
+    for p in ("Design a database schema for a hostel booking app",
+              "Debug this:\n```python\ndef f(x): return x/0\n```",
+              "A shirt costs 800, gets 10% off, then 18% tax. Final price?",
+              "write a python function to reverse a linked list",
+              "Compare Raft and Paxos and explain why one is easier to implement"):
+        assert _router.decide(p).lane == "smart", p
+
+
+def test_router_override_prefix_and_mode():
+    mode, rest = _router.parse_override("/fast Design a compiler")
+    assert (mode, rest) == ("fast", "Design a compiler")
+    assert _router.parse_override("no prefix") == (None, "no prefix")
+    d = _router.decide("hi", mode="smart")
+    assert d.lane == "smart" and d.forced
+
+
+def test_router_chain_spills_to_other_lane_and_benches_cooling():
+    chain = _router.build_chain("fast", ["a", "b"], ["c", "a"],
+                                cooling=lambda n: n == "c")
+    assert chain == ["a", "b", "c"]          # fast first, dedup, cooling last
+    assert _router.build_chain("smart", ["a"], ["b"]) == ["a", "b"]
+
+
+def test_cooldown_lengths_match_error_kind():
+    t = [100.0]
+    cd = _router.Cooldown(clock=lambda: t[0])
+    assert cd.hit("x", "HTTP 404: model_not_found") == 3600
+    assert cd.hit("y", "HTTP 429: Rate limit exceeded") == 60
+    assert cd.hit("z", "HTTP 503: high demand") == 30
+    assert cd.active("y")
+    t[0] += 61
+    assert not cd.active("y") and cd.active("x")
+    cd.clear(["x"])
+    assert not cd.active("x")
+
+
+def _offline_engine():
+    from contextos.server import Engine
+    d = tempfile.mkdtemp()
+    return Engine(os.path.join(d, "e.db"), {}, offline=True)
+
+
+def test_engine_routes_by_difficulty():
+    e = _offline_engine()
+    easy = e.chat("hi there")
+    assert easy["route"]["lane"] == "fast" and easy["provider"] == "offline-b"
+    hard = e.chat("Design a schema and explain why it avoids the N+1 bug")
+    assert hard["route"]["lane"] == "smart" and hard["provider"] == "offline-a"
+    forced = e.chat("/smart hi")
+    assert forced["route"]["forced"] and forced["provider"] == "offline-a"
+
+
+def test_engine_falls_back_across_lanes_and_benches_failed_route():
+    e = _offline_engine()
+    e.toggle_failure("offline-a")
+    r = e.chat("Design a schema and explain why it avoids the N+1 bug")
+    assert r["provider"] == "offline-b"
+    assert r["switched"][0]["direction"] == "downshift"
+    assert e.cooldown.active("offline-a")
+    e.toggle_failure("offline-a")                 # restoring it lifts the bench
+    assert not e.cooldown.active("offline-a")
+    assert e.chat("Design a new schema for the booking table")["provider"] == "offline-a"
+
+
+def test_commit_ignores_think_aloud_and_reads_every_block():
+    e = _offline_engine()
+    text = ("We need to output a <context> block with entries: fact | /x | y.</context>\n"
+            "<context>\nfact | /task/inputs/price | 800\n</context>\nAnswer here.")
+    written = e._commit(text, "m")
+    assert [w["address"] for w in written] == ["/task/inputs/price"]
+
+
+def test_engine_saves_user_input_when_model_saves_nothing():
+    e = _offline_engine()
+    e._offline_reply = lambda name, user: "Here is an answer with no context block."
+    r = e.chat("Beds cost 450 rupees and checkout is at 10am")
+    assert r["written"][0]["address"] == "/task/inputs/turn-1"
+    assert "450" in e.ctx.get("/task/inputs/turn-1").value
+    assert e.chat("thanks")["written"] == []      # small talk is not stored
+
+
+def test_degenerate_reply_detection():
+    from contextos.server import is_degenerate
+    assert is_degenerate("!" * 200)
+    assert is_degenerate("ok " + "!" * 120)
+    assert not is_degenerate("The final price is **849.6**.")
+    assert not is_degenerate("```\n" + "-" * 40 + "\n| a | b |\n```\nTable above shows the "
+                             "columns, keys, and constraints for the bookings table.")
+
+
+def test_engine_reads_lane_order_from_env():
+    from contextos.server import Engine
+    d = tempfile.mkdtemp()
+    env = {"GROQ_API_KEY": "k", "MISTRAL_API_KEY": "k",
+           "LLM_SMART_ORDER": "mistral,groq,nvidia", "LLM_FAST_ORDER": "groq-fast"}
+    e = Engine(os.path.join(d, "e.db"), env, offline=False)
+    assert e.smart == ["mistral", "groq"]        # nvidia has no key: skipped
+    assert e.fast == ["groq-fast"]
+
+
 if __name__ == "__main__":
     raise SystemExit(_run())

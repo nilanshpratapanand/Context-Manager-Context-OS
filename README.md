@@ -29,6 +29,24 @@ being spent, and every model switch as it happens.
 Click any provider in the sidebar to force it to fail, then send another message. That's
 the demo: the model changes, the task doesn't.
 
+### Two-lane routing (free models only)
+
+Every provider contributes two routes that share one key: its strongest free model
+(**smart lane**) and its quickest (**fast lane**). Each message gets a 0–1 difficulty
+score from a deterministic heuristic (`contextos/router.py`), with no API call spent on
+it. Code, multi-step arithmetic, design and debugging go smart. Chat, rephrasing and
+lookups go fast. That score is also the `difficulty` fed to the handoff gate (D7).
+
+- A lane with nothing working spills into the other lane, and each hop is a real
+  escalate/downshift handoff.
+- A failed route is benched: 429 for 60 s, 503/timeout for 30 s, a retired model or
+  paywall for an hour. Later messages skip it instead of waiting on it.
+- Start a message with `/smart ` or `/fast ` to force a lane, or set
+  `LLM_ROUTING=smart|fast` in `.env`.
+
+Setup: copy `.env.example` to `.env`. It lists 7 free, no-card providers with signup
+links. Then run `python -m contextos.live --check` to see which keys and models answer.
+
 ---
 
 **On Windows, double-click `RUN.bat`** — a menu for everything, dashboard first, and it
@@ -288,6 +306,7 @@ contextos/store.py       SQLite + FTS5, versioning, conflicts, TTL
 contextos/retrieval.py   4-ranker hybrid search fused by RRF
 contextos/budget.py      tiered packing + loss accounting
 contextos/handoff.py     direction-aware packets, difficulty gate
+contextos/router.py      two-lane routing: difficulty score, lane choice, cooldowns
 contextos/bench.py       sufficiency benchmark + 3 baselines
 contextos/mcp_server.py  MCP stdio server
 contextos/server.py      dashboard backend (stdlib http.server)

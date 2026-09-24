@@ -30,14 +30,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
 from . import ContextOS, __version__
+from . import router
 from .budget import render
 from .handoff import classify, should_migrate
-from .live import PROVIDERS, MODEL_ENV_OVERRIDE, Provider, ProviderError, complete, load_env
+from .live import (FAST_ORDER, MODEL_ENV_OVERRIDE, PROVIDERS, SMART_ORDER,
+                   ProviderError, complete, load_env)
 from .units import KINDS, count_tokens
 
 HERE = pathlib.Path(__file__).parent
 
-# The model is asked to end its reply with a block like:
+# The model is asked to start its reply with a block like:
 #   <context>
 #   decision | /project/decisions/db | PostgreSQL 16, chosen for JSONB
 #   constraint | /project/constraints/no-deps | no new runtime dependencies
@@ -47,20 +49,26 @@ SYSTEM = """You are a capable engineering assistant working on an ongoing task.
 You are given only the RELEVANT context for this turn, not the whole conversation.
 Trust it. If something you need is missing, say so plainly rather than inventing it.
 
-After your reply, if this turn established anything durable - a decision, a rule or
-constraint, a blocker, a goal, or a fact worth keeping - append a block exactly like:
+A different model may take over this task at any moment and will see ONLY what you
+save. So you MUST START your reply with a <context> block that saves every input
+the user gave this turn (numbers, names, requirements, rules, choices) and every
+result you will give. Then write your answer below it. One line per item:
+
+kind | /address/with-hyphens | value in one line
+
+kind is one of: decision, constraint, blocker, fact, goal.
+Example - user asked "a shirt costs 800, 10% off, then 18% tax; final price?":
 
 <context>
-decision | /project/decisions/short-name | the decision, in one line
-constraint | /project/constraints/short-name | the rule that must hold
-blocker | /task/blockers/short-name | what is blocking progress
-fact | /project/area/short-name | the established fact
-goal | /task/goal | what we are trying to achieve
+fact | /task/inputs/shirt-price | shirt base price is 800
+constraint | /task/rules/discount | 10% discount applied first
+constraint | /task/rules/tax | 18% tax applied on the discounted price
+fact | /task/results/final-price | discounted 720, final price 849.60
 </context>
 
-Rules for that block: lowercase addresses, words separated by hyphens, roots must be
-one of user/project/task/agent/tool/artifact. Omit the block entirely if this turn
-established nothing durable. Never put chit-chat in it."""
+Addresses are lowercase; the first segment must be user, project, task, agent, tool
+or artifact. Reuse an existing address when updating the same item. Skip the block
+only for pure small talk (greetings, thanks)."""
 
 CONTEXT_RE = re.compile(r"<context>(.*?)</context>", re.DOTALL | re.IGNORECASE)
 
@@ -68,6 +76,20 @@ CONTEXT_RE = re.compile(r"<context>(.*?)</context>", re.DOTALL | re.IGNORECASE)
 SWITCH_SIGNALS = ("429", "rate limit", "rate_limit", "quota", "insufficient",
                   "capacity", "overloaded", "503", "502", "500", "timed out",
                   "network", "unauthorized", "401", "403")
+
+
+_RUN = re.compile(r"(\S)\1{29,}")
+
+
+def is_degenerate(text: str) -> bool:
+    """Free endpoints occasionally return a collapsed sample like '!!!!!!...'.
+    Accepting it would put junk in front of the user instead of falling back."""
+    body = CONTEXT_RE.sub("", text or "").strip()
+    if not body:
+        return False
+    if _RUN.search(body) and len(_RUN.sub("", body).strip()) < len(body) * 0.5:
+        return True
+    return sum(c.isalnum() for c in body) < len(body) * 0.2
 
 
 def wants_switch(msg: str) -> bool:
@@ -88,40 +110,53 @@ class Engine:
         self.history: list[dict[str, str]] = []
         self.events: list[dict[str, Any]] = []
         self.forced_failures: set[str] = set()   # demo button
-        self.order = self._provider_order()
+        self.cooldown = router.Cooldown()
+        self.mode = env.get("LLM_ROUTING", "auto").strip().lower()
+        self.threshold = float(env.get("LLM_ROUTE_THRESHOLD", router.DEFAULT_THRESHOLD))
+        self.smart, self.fast = self._lanes()
         self.current = self.order[0] if self.order else None
         self.turns = 0
 
     # ------------------------------------------------------------- providers
-    def _provider_order(self) -> list[str]:
+    OFFLINE_TIERS = {"offline-a": 0.85, "offline-b": 0.55, "offline-c": 0.5}
+
+    def _lanes(self) -> tuple[list[str], list[str]]:
         if self.offline:
-            return ["offline-a", "offline-b", "offline-c"]
-        explicit = self.env.get("LLM_PROVIDER_ORDER", "")
-        names = [n.strip() for n in explicit.split(",") if n.strip()] if explicit else \
-            [n for n in PROVIDERS if PROVIDERS[n].available(self.env)]
-        return [n for n in names if n in PROVIDERS and PROVIDERS[n].available(self.env)] \
-            if not self.offline else names
+            return ["offline-a"], ["offline-b", "offline-c"]
+
+        def lane(var: str, default: list[str]) -> list[str]:
+            raw = self.env.get(var, "")
+            names = [n.strip() for n in raw.split(",") if n.strip()] or default
+            return [n for n in names if n in PROVIDERS and PROVIDERS[n].available(self.env)]
+        return lane("LLM_SMART_ORDER", SMART_ORDER), lane("LLM_FAST_ORDER", FAST_ORDER)
+
+    def go_offline(self) -> None:
+        self.offline = True
+        self.smart, self.fast = self._lanes()
+        self.current = self.order[0]
+
+    @property
+    def order(self) -> list[str]:
+        return self.smart + [n for n in self.fast if n not in self.smart]
 
     def provider_info(self) -> list[dict[str, Any]]:
         out = []
         for name in self.order:
+            lane = "smart" if name in self.smart else "fast"
+            info = {"name": name, "lane": lane, "tier": self._tier(name),
+                    "current": name == self.current,
+                    "failed": name in self.forced_failures,
+                    "cooldown": self.cooldown.remaining(name)}
             if self.offline:
-                out.append({"name": name, "model": "simulated", "tier": 0.5,
-                            "current": name == self.current,
-                            "failed": name in self.forced_failures})
-                continue
-            p = PROVIDERS[name]
-            out.append({
-                "name": name,
-                "model": self.env.get(MODEL_ENV_OVERRIDE.get(name, ""), p.model),
-                "tier": p.tier,
-                "current": name == self.current,
-                "failed": name in self.forced_failures,
-            })
+                info["model"] = "simulated"
+            else:
+                info["model"] = self.env.get(MODEL_ENV_OVERRIDE.get(name, ""),
+                                             PROVIDERS[name].model)
+            out.append(info)
         return out
 
     def _tier(self, name: str) -> float:
-        return 0.5 if self.offline else PROVIDERS[name].tier
+        return self.OFFLINE_TIERS.get(name, 0.5) if self.offline else PROVIDERS[name].tier
 
     def _call(self, name: str, system: str, user: str) -> tuple[str, int]:
         if name in self.forced_failures:
@@ -135,6 +170,8 @@ class Engine:
         if not text.strip():
             raise ProviderError("empty reply (the model may have spent its whole "
                                 "output budget on reasoning)")
+        if is_degenerate(text):
+            raise ProviderError("garbled reply (repeated characters) - treating as a failure")
         return text, used
 
     def _offline_reply(self, name: str, user: str) -> str:
@@ -158,11 +195,11 @@ class Engine:
     def _commit(self, text: str, source: str) -> list[dict[str, str]]:
         """Pull the <context> block out of the reply and write it to the store.
         This is D2 - write-time commit - done for the model rather than by it."""
-        m = CONTEXT_RE.search(text or "")
-        if not m:
-            return []
+        # Every block, not just the first: some models "think aloud" and mention
+        # <context> before writing the real one. Malformed lines are dropped below.
+        lines = [ln for blk in CONTEXT_RE.findall(text or "") for ln in blk.splitlines()]
         written = []
-        for line in m.group(1).splitlines():
+        for line in lines:
             parts = [p.strip() for p in line.split("|")]
             if len(parts) < 3:
                 continue
@@ -193,6 +230,8 @@ class Engine:
         if not self.order:
             return {"error": "No providers available. Add a key to .env, or start the "
                              "server with --offline."}
+        forced, prompt = router.parse_override(prompt)
+        decision = router.decide(prompt, forced or self.mode, self.threshold)
         self.turns += 1
         if self.turns == 1 and not self.ctx.get("/task/goal"):
             self.ctx.put("/task/goal", prompt.strip()[:400], kind="goal",
@@ -210,8 +249,9 @@ class Engine:
         switched: list[dict[str, Any]] = []
         text, used_provider, prompt_tokens = "", None, 0
 
-        start_at = self.order.index(self.current) if self.current in self.order else 0
-        chain = self.order[start_at:] + self.order[:start_at]
+        chain = router.build_chain(decision.lane, self.smart, self.fast,
+                                   self.cooldown.active)
+        difficulty = decision.score
 
         for i, name in enumerate(chain):
             try:
@@ -220,7 +260,9 @@ class Engine:
                 attempts.append({"provider": name, "ok": True})
                 break
             except ProviderError as exc:
-                attempts.append({"provider": name, "ok": False, "error": str(exc)[:200]})
+                benched = self.cooldown.hit(name, str(exc))
+                attempts.append({"provider": name, "ok": False, "error": str(exc)[:200],
+                                 "cooldown": benched})
                 if not wants_switch(str(exc)) and i == len(chain) - 1:
                     break
                 nxt = chain[i + 1] if i + 1 < len(chain) else None
@@ -230,9 +272,14 @@ class Engine:
                 # model we are moving TO, in the direction we are moving.
                 direction = classify(self._tier(name), self._tier(nxt))
                 packet = self.ctx.handoff(direction=direction, budget_tokens=self.budget,
-                                          from_model=name, to_model=nxt, difficulty=0.7)
-                ok, why = should_migrate(direction, 0.7)
-                user_msg = (f"{packet.render()}\n\n## Now\n{prompt}")
+                                          from_model=name, to_model=nxt,
+                                          difficulty=difficulty)
+                ok, why = should_migrate(direction, difficulty)
+                # The packet carries the store; the last exchange is what the
+                # failed model was also given, so the new one must not lose it.
+                user_msg = (f"{packet.render()}\n\n"
+                            + (f"## Last exchange\n{recent}\n\n" if recent else "")
+                            + f"## Now\n{prompt}")
                 switched.append({
                     "from": name, "to": nxt, "direction": direction,
                     "reason": str(exc)[:160],
@@ -246,10 +293,16 @@ class Engine:
             self.events.append({"ts": time.time(), "kind": "all_failed",
                                 "detail": attempts})
             return {"error": "Every provider failed.", "attempts": attempts,
-                    "switched": switched}
+                    "switched": switched, "route": self._route_info(decision)}
 
         self.current = used_provider
         written = self._commit(text, used_provider)
+        if not written and decision.score > 0.05:
+            # The model saved nothing. Keep the user's own words so a later
+            # handoff still carries this turn's inputs.
+            u = self.ctx.put(f"/task/inputs/turn-{self.turns}", prompt.strip()[:500],
+                             kind="fact", source="user", importance=0.75)
+            written = [{"address": u.address, "kind": u.kind, "value": u.value}]
         reply = self.strip_block(text)
 
         self.history.append({"role": "user", "text": prompt})
@@ -263,6 +316,7 @@ class Engine:
         return {
             "reply": reply,
             "provider": used_provider,
+            "route": self._route_info(decision),
             "attempts": attempts,
             "switched": switched,
             "written": written,
@@ -274,6 +328,11 @@ class Engine:
                 "omitted_units": len(selection.omitted),
             },
         }
+
+    @staticmethod
+    def _route_info(d: router.Decision) -> dict[str, Any]:
+        return {"lane": d.lane, "difficulty": d.score, "reasons": d.reasons,
+                "forced": d.forced}
 
     # ----------------------------------------------------------------- state
     def state(self) -> dict[str, Any]:
@@ -293,6 +352,7 @@ class Engine:
             "events": self.events[-30:],
             "budget": self.budget,
             "turns": self.turns,
+            "routing": {"mode": self.mode, "threshold": self.threshold},
         }
 
     def reset(self) -> None:
@@ -302,12 +362,14 @@ class Engine:
             self.history.clear()
             self.events.clear()
             self.forced_failures.clear()
+            self.cooldown.clear()
             self.turns = 0
             self.current = self.order[0] if self.order else None
 
     def toggle_failure(self, name: str) -> bool:
         if name in self.forced_failures:
             self.forced_failures.discard(name)
+            self.cooldown.clear([name])      # un-failing a provider restores it at once
             return False
         self.forced_failures.add(name)
         return True
@@ -399,17 +461,18 @@ def serve(db: str, port: int, offline: bool, budget: int, env_path: str,
 
     if not engine.order:
         print("No provider keys found in .env - starting in offline mode instead.")
-        engine.offline = True
-        engine.order = ["offline-a", "offline-b", "offline-c"]
-        engine.current = engine.order[0]
+        engine.go_offline()
 
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{port}"
-    mode = "OFFLINE (simulated replies)" if engine.offline else \
-        "LIVE: " + ", ".join(engine.order)
     print("=" * 62)
     print(f"  ContextOS dashboard  {url}")
-    print(f"  Mode: {mode}")
+    if engine.offline:
+        print("  Mode: OFFLINE (simulated replies)")
+    else:
+        print(f"  Smart lane: {', '.join(engine.smart) or '(none)'}")
+        print(f"  Fast lane:  {', '.join(engine.fast) or '(none)'}")
+        print(f"  Routing: {engine.mode}, threshold {engine.threshold}")
     print(f"  Store: {db}   context budget: {budget} tokens")
     print("=" * 62)
     print("  Press Ctrl+C to stop.")

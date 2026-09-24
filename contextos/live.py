@@ -71,74 +71,102 @@ class Provider:
     key_env: str
     model: str
     url: str
-    style: str = "openai"          # "openai" | "gemini"
-    tier: float = 0.5              # rough capability, only used to pick a direction
+    style: str = "openai"          # "openai" | "gemini" | "anthropic"
+    tier: float = 0.5              # rough capability; picks the handoff direction
+    lane: str = "smart"            # "smart" | "fast" - see router.py
 
     def available(self, env: dict[str, str]) -> bool:
         return bool(env.get(self.key_env))
 
 
+# Every provider appears twice: its strongest free model (smart lane) and its
+# quickest (fast lane, name ends in "-fast"). Both share one key.
+# Model IDs verified against each provider's live model list on 2026-09-24.
+# Where a provider offers a "-latest" alias it is used, because retired model
+# names are the most common way a free setup silently breaks.
+_GROQ = "https://api.groq.com/openai/v1/chat/completions"
+_GEMINI = "https://generativelanguage.googleapis.com/v1beta/models"
+_OPENROUTER = "https://openrouter.ai/api/v1/chat/completions"
+_NVIDIA = "https://integrate.api.nvidia.com/v1/chat/completions"
+_CLOUDFLARE = ("https://api.cloudflare.com/client/v4/accounts/"
+               "{account_id}/ai/v1/chat/completions")
+_MISTRAL = "https://api.mistral.ai/v1/chat/completions"
+_COHERE = "https://api.cohere.ai/compatibility/v1/chat/completions"
+
 PROVIDERS: dict[str, Provider] = {
-    # ---- verified working for this project ---------------------------------
-    # Google AI Studio: no card, 15 RPM / 1500 RPD on Flash. Most reliable free tier.
-    "gemini": Provider("gemini", "GEMINI_API_KEY", "gemini-3.6-flash",
-                       "https://generativelanguage.googleapis.com/v1beta/models",
-                       style="gemini", tier=0.75),
-    # Groq: no card, ~30 RPM. Qwen is preview-only there; these are the production IDs.
-    "groq": Provider("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile",
-                     "https://api.groq.com/openai/v1/chat/completions", tier=0.55),
-    "cerebras": Provider("cerebras", "CEREBRAS_API_KEY", "llama-3.3-70b",
-                         "https://api.cerebras.ai/v1/chat/completions", tier=0.55),
-    "mistral": Provider("mistral", "MISTRAL_API_KEY", "mistral-small-latest",
-                        "https://api.mistral.ai/v1/chat/completions", tier=0.5),
-
-    # ---- added as fallbacks: all free, no credit card -----------------------
-    # One key, many models. Anything ending ":free" costs nothing.
+    # Groq: no card, 30 RPM / 1,000 RPD per model. Fastest. Llama was removed
+    # from the free plan in 2026; gpt-oss is what remains.
+    "groq": Provider("groq", "GROQ_API_KEY", "openai/gpt-oss-120b", _GROQ, tier=0.8),
+    "groq-fast": Provider("groq-fast", "GROQ_API_KEY", "openai/gpt-oss-20b", _GROQ,
+                          tier=0.6, lane="fast"),
+    # Google AI Studio: no card. Flash only - Pro moved behind billing.
+    "gemini": Provider("gemini", "GEMINI_API_KEY", "gemini-flash-latest", _GEMINI,
+                       style="gemini", tier=0.85),
+    "gemini-fast": Provider("gemini-fast", "GEMINI_API_KEY", "gemini-flash-lite-latest",
+                            _GEMINI, style="gemini", tier=0.6, lane="fast"),
+    # OpenRouter: no card, 20 RPM / 50 RPD (1,000 RPD after a one-time $10 top-up).
     "openrouter": Provider("openrouter", "OPENROUTER_API_KEY",
-                           "meta-llama/llama-3.3-70b-instruct:free",
-                           "https://openrouter.ai/api/v1/chat/completions", tier=0.6),
-    # NVIDIA build.nvidia.com - free credits, OpenAI-compatible.
-    "nvidia": Provider("nvidia", "NVIDIA_API_KEY", "meta/llama-3.3-70b-instruct",
-                       "https://integrate.api.nvidia.com/v1/chat/completions", tier=0.7),
-    # Cloudflare Workers AI - 10k neurons/day free. URL carries the account id.
-    "cloudflare": Provider("cloudflare", "CLOUDFLARE_API_KEY",
-                           "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-                           "https://api.cloudflare.com/client/v4/accounts/"
-                           "{account_id}/ai/v1/chat/completions", tier=0.5),
-    # Zhipu GLM - Flash models are free.
-    "zhipu": Provider("zhipu", "ZHIPU_API_KEY", "glm-4.5-flash",
-                      "https://open.bigmodel.cn/api/paas/v4/chat/completions", tier=0.5),
-    # Cohere - free tier is non-commercial only; fine for a student project.
-    "cohere": Provider("cohere", "COHERE_API_KEY", "command-r-plus",
-                       "https://api.cohere.ai/compatibility/v1/chat/completions", tier=0.6),
-
-    # ---- last resort: your own machine -------------------------------------
-    # No key, no quota, works with the wifi off. OLLAMA_API_KEY=local turns it on.
+                           "nvidia/nemotron-3-ultra-550b-a55b:free", _OPENROUTER,
+                           tier=0.85),
+    "openrouter-fast": Provider("openrouter-fast", "OPENROUTER_API_KEY",
+                                "z-ai/glm-5.2:free", _OPENROUTER,
+                                tier=0.55, lane="fast"),
+    # NVIDIA build.nvidia.com: no card, free credits, 40 RPM. Correct but slow
+    # (30-40 s per reply measured), so it sits late in both lanes.
+    "nvidia": Provider("nvidia", "NVIDIA_API_KEY", "z-ai/glm-5.3", _NVIDIA,
+                       tier=0.9),
+    "nvidia-fast": Provider("nvidia-fast", "NVIDIA_API_KEY",
+                            "nvidia/nemotron-3.5-lightning-30b-a3b", _NVIDIA,
+                            tier=0.55, lane="fast"),
+    # Cloudflare Workers AI: no card, 10,000 neurons/day. URL carries the account id.
+    "cloudflare": Provider("cloudflare", "CLOUDFLARE_API_KEY", "@cf/openai/gpt-oss-120b",
+                           _CLOUDFLARE, tier=0.8),
+    "cloudflare-fast": Provider("cloudflare-fast", "CLOUDFLARE_API_KEY",
+                                "@cf/openai/gpt-oss-20b", _CLOUDFLARE, tier=0.6,
+                                lane="fast"),
+    # Mistral: no card, free plan, trains on your data by default. Often 429s.
+    "mistral": Provider("mistral", "MISTRAL_API_KEY", "mistral-medium-latest", _MISTRAL,
+                        tier=0.75),
+    "mistral-fast": Provider("mistral-fast", "MISTRAL_API_KEY", "ministral-8b-latest",
+                             _MISTRAL, tier=0.45, lane="fast"),
+    # Cohere: no card, 1,000 calls/month, non-commercial use only.
+    "cohere": Provider("cohere", "COHERE_API_KEY", "command-a-plus-05-2026", _COHERE,
+                       tier=0.8),
+    "cohere-fast": Provider("cohere-fast", "COHERE_API_KEY", "command-r7b-12-2024",
+                            _COHERE, tier=0.45, lane="fast"),
+    # Your own machine: no key, no quota, works offline. OLLAMA_API_KEY=local enables it.
     "ollama": Provider("ollama", "OLLAMA_API_KEY", "llama3.1:8b",
-                       "http://localhost:11434/v1/chat/completions", tier=0.35),
-
-    # ---- kept, but Together now bills before use ----------------------------
-    "together": Provider("together", "TOGETHER_API_KEY",
-                         "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
-                         "https://api.together.xyz/v1/chat/completions", tier=0.7),
-    "anthropic": Provider("anthropic", "ANTHROPIC_API_KEY", "claude-3-5-haiku-latest",
+                       "http://localhost:11434/v1/chat/completions", tier=0.35,
+                       lane="fast"),
+    # Paid, never used unless you add a key.
+    "anthropic": Provider("anthropic", "ANTHROPIC_API_KEY", "claude-haiku-4-5",
                           "https://api.anthropic.com/v1/messages",
-                          style="anthropic", tier=0.8),
+                          style="anthropic", tier=0.85),
 }
+
+# Default fallback order inside each lane. Override with LLM_SMART_ORDER /
+# LLM_FAST_ORDER in .env. Ordered by latency measured on 2026-09-24
+# (Groq ~1s, OpenRouter/Cloudflare ~3s, NVIDIA ~30-40s, Gemini often 503).
+SMART_ORDER = ["groq", "openrouter", "cloudflare", "cohere", "gemini", "mistral",
+               "nvidia", "anthropic"]
+FAST_ORDER = ["groq-fast", "openrouter-fast", "cloudflare-fast", "cohere-fast",
+              "gemini-fast", "mistral-fast", "nvidia-fast", "ollama"]
+
 
 # Cloudflare puts the account id in the path, not a header.
 def resolve_url(p: Provider, env: dict[str, str]) -> str:
     if "{account_id}" not in p.url:
         return p.url
-    acct = env.get("CLOUDFLARE_ACCOUNT_ID", "")
+    # Accept a pasted dashboard URL as well as the bare 32-hex id.
+    m = re.search(r"[0-9a-f]{32}", env.get("CLOUDFLARE_ACCOUNT_ID", ""))
+    acct = m.group(0) if m else ""
     if not acct:
         raise ProviderError("CLOUDFLARE_ACCOUNT_ID is not set in .env "
                             "(find it on your Cloudflare dashboard URL)")
     return p.url.replace("{account_id}", acct)
 
-MODEL_ENV_OVERRIDE = {n: n.upper() + "_MODEL" for n in (
-    "groq", "cerebras", "together", "mistral", "gemini", "openrouter",
-    "anthropic", "nvidia", "cloudflare", "zhipu", "cohere", "ollama")}
+# groq -> GROQ_MODEL, groq-fast -> GROQ_FAST_MODEL
+MODEL_ENV_OVERRIDE = {n: n.upper().replace("-", "_") + "_MODEL" for n in PROVIDERS}
 
 
 class ProviderError(RuntimeError):
@@ -171,11 +199,15 @@ def _post(url: str, payload: dict[str, Any], headers: dict[str, str],
         raise ProviderError(f"HTTP {e.code}: {detail[:300]}") from None
     except urllib.error.URLError as e:
         raise ProviderError(f"network: {e.reason}") from None
+    # A slow provider times out mid-read as a bare TimeoutError/OSError, not a
+    # URLError. Uncaught, it would end the turn instead of falling back.
+    except (TimeoutError, OSError) as e:
+        raise ProviderError(f"network: {type(e).__name__}: {e}") from None
 
 
 # Bump this whenever live.py changes in a way you need to confirm reached the
 # user's machine. It is printed by --check.
-BUILD = "2026-09-24-free-provider-cascade"
+BUILD = "2026-09-24-two-lane-routing"
 
 _THINK = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
 
@@ -245,6 +277,10 @@ def _get(url: str, headers: dict[str, str], timeout: int = 30) -> Any:
         raise ProviderError(f"HTTP {e.code}: {detail[:300]}") from None
     except urllib.error.URLError as e:
         raise ProviderError(f"network: {e.reason}") from None
+    # A slow provider times out mid-read as a bare TimeoutError/OSError, not a
+    # URLError. Uncaught, it would end the turn instead of falling back.
+    except (TimeoutError, OSError) as e:
+        raise ProviderError(f"network: {type(e).__name__}: {e}") from None
 
 
 def models_url(p: Provider, env: dict[str, str]) -> str:
@@ -296,7 +332,7 @@ def list_models(provider_name: str, env: dict[str, str],
     return sorted(set(ids))
 
 
-def check(env: dict[str, str], timeout: int = 30) -> list[dict[str, Any]]:
+def check(env: dict[str, str], timeout: int = 90) -> list[dict[str, Any]]:
     """Make one real, tiny call to every configured provider.
 
     Model names drift - a provider renames or retires a model and every call
@@ -323,7 +359,9 @@ def check(env: dict[str, str], timeout: int = 30) -> list[dict[str, Any]]:
             # Distinguish "the provider answered and said no" from "we never
             # reached the provider". A network 403 from a proxy is not a bad key,
             # and saying so would send you debugging the wrong thing.
-            if msg.startswith("network:"):
+            if "Timeout" in msg or "timed out" in msg:
+                hint = "  <- reached the provider but it was too slow; usually "                        "busy, try again later"
+            elif msg.startswith("network:"):
                 hint = "  <- could not reach the provider at all (no internet, " \
                        "firewall, VPN, or a proxy blocking it)"
             elif "1010" in msg:
@@ -338,9 +376,14 @@ def check(env: dict[str, str], timeout: int = 30) -> list[dict[str, Any]]:
                 hint = "  <- the provider rejected this key"
             elif msg.startswith("HTTP 429"):
                 hint = "  <- key is valid, the free tier is just busy or spent"
+            elif msg.startswith("HTTP 503") or msg.startswith("HTTP 502"):
+                hint = "  <- key is valid, the provider is overloaded right now"
             # A 429 means the request authenticated and was accepted, then throttled.
             # Calling that a failure would send you replacing a key that works.
-            status = "LIMITED" if msg.startswith("HTTP 429") else "FAIL"
+            busy = ("Timeout" in msg or "timed out" in msg
+                    or msg.startswith(("HTTP 503", "HTTP 502")))
+            status = ("LIMITED" if msg.startswith("HTTP 429")
+                      else "BUSY" if busy else "FAIL")
             rows.append({"provider": name, "status": status, "model": model,
                          "detail": msg[:200] + hint})
     return rows
@@ -699,7 +742,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             if r["detail"]:
                 print(f"{'':<{width}}  {r['detail']}")
         ok = [r["provider"] for r in rows if r["status"] == "OK"]
-        limited = [r["provider"] for r in rows if r["status"] == "LIMITED"]
+        limited = [r["provider"] for r in rows if r["status"] in ("LIMITED", "BUSY")]
         print(f"\n{len(ok)} working now: {', '.join(ok) if ok else 'none'}")
         if limited:
             print(f"{len(limited)} valid but rate-limited right now: "
@@ -712,10 +755,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                   "nowhere to switch to when that one fails.")
         return 0
     if args.list_providers:
-        print(f"{'provider':<12}{'key in .env':>13}  model")
+        print(f"{'provider':<17}{'key in .env':<13}{'lane':<7}model")
         for name, p in PROVIDERS.items():
             model = env.get(MODEL_ENV_OVERRIDE.get(name, ""), p.model)
-            print(f"{name:<12}{'yes' if p.available(env) else 'no':>13}  {model}")
+            print(f"{name:<17}{'yes' if p.available(env) else 'no':<13}{p.lane:<7}{model}")
         return 0
 
     for n in (args.a, args.b):
