@@ -7,8 +7,12 @@ rem ---------------------------------------------------------------- find python
 rem Each probe is its own statement: chaining "if ... && set" on one line binds
 rem the && to the IF, not to WHERE, and silently picks the wrong interpreter.
 set "PY="
-where py >nul 2>&1
-if not errorlevel 1 set "PY=py"
+rem The installer's private environment wins over any system Python.
+if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
+if not defined PY (
+  where py >nul 2>&1
+  if not errorlevel 1 set "PY=py"
+)
 if not defined PY (
   where python >nul 2>&1
   if not errorlevel 1 set "PY=python"
