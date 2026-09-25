@@ -685,6 +685,53 @@ def test_block_only_reply_is_continued_on_same_model():
     assert len(asks) == 2
 
 
+def test_portable_export_is_paste_ready_and_sized():
+    e = _offline_engine()
+    cid = list(e.chat_stream(None, "Design the booking schema"))[0]["conversation"]["id"]
+    list(e.chat_stream(cid, "Add a rule: no double booking of a bed"))
+    ctx = e.ctx_for(cid)
+    ctx.put("/project/constraints/no-overlap", "a bed can never be double-booked",
+            kind="constraint", importance=0.95)
+    for i in range(80):                             # far more than fits in Compact
+        ctx.put(f"/project/notes/n{i}", "long background note about hostel ops " * 6,
+                kind="fact", importance=0.3)
+    compact = e.portable(cid, "compact")
+    assert compact["chars"] <= 4800 and compact["left_out"] > 0
+    t = compact["text"]
+    memory = t.split("## Where we left off")[0]     # the transcript is quoted verbatim
+    assert "a bed can never be double-booked" in memory and "## Goal" in memory
+    assert "/project/" not in memory and "/task/" not in memory and "<context>" not in t
+    full = e.portable(cid, "full")
+    assert full["left_out"] == 0 and full["chars"] > compact["chars"]
+    assert full["text"].count("**Me:**") == 2
+
+
+def test_portable_labels_bare_values_from_their_address():
+    from types import SimpleNamespace as U
+    from contextos.server import Engine
+    lab = Engine._labelled
+    assert lab(U(address="/project/hostel/checkout-time", value="10:00 AM")) == \
+        "Checkout time: 10:00 AM"
+    assert lab(U(address="/project/hostel/bed-cost", value="bed cost is 450 rupees")) == \
+        "bed cost is 450 rupees"                       # already says it
+
+
+def test_http_portable_download():
+    import json as _j
+    httpd, base = _http_server()
+    try:
+        cid = _j.load(_req(base + "/api/conversations", {}))["id"]
+        _req(base + "/api/chat", {"conversation_id": cid,
+                                  "prompt": "Design a bookings schema"}).read()
+        r = _req(base + f"/api/conversations/{cid}/portable?size=standard&download=1")
+        assert "context.md" in r.headers["Content-Disposition"]
+        assert r.read().decode().startswith("# Context: Design a bookings schema")
+        meta = _j.load(_req(base + f"/api/conversations/{cid}/portable?size=compact"))
+        assert meta["chars"] <= 4800 and meta["tokens"] > 0
+    finally:
+        httpd.shutdown()
+
+
 def test_route_pin_goes_first():
     e = _offline_engine()
     r = e.chat("hi", route="offline-c")

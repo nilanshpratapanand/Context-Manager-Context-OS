@@ -28,6 +28,14 @@ every conversation.
   model, lane, difficulty, context tokens sent, handoffs and facts saved.
 - **Lane and model.** *Auto / Smart / Fast* in the header, or `/smart` and `/fast` at
   the start of a message. A model picker says which model to try first.
+- **Continue in another AI.** The share button turns the chat's memory into one
+  Markdown message to paste into ChatGPT, Claude, Gemini or any other chat. It
+  carries the goal, rules, decisions, facts and where you left off, with no store
+  addresses, and asks the other AI to confirm in one line. *Compact* stays under
+  5,000 characters, the point where ChatGPT turns a paste into an attachment;
+  *Standard* is about 1k tokens; *Full* adds the whole transcript and is meant to be
+  downloaded as a `.md` file and attached. In tests, three other models answered
+  follow-up questions correctly from the Compact paste alone.
 - **Memory panel.** What this chat's store holds. Delete anything wrong, and preview
   the handoff packet a new model would get.
 - **Models panel.** Status and rest timers for every model, a "test every model"

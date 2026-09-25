@@ -232,6 +232,80 @@ class Engine:
             out += [f"**{who}:**", "", m["content"], ""]
         return "\n".join(out)
 
+    # ------------------------------------------------ portable export
+    # Pasting into ChatGPT past ~5,000 characters turns the paste into a file
+    # attachment the model reads less closely, so Compact is held under that.
+    PORTABLE = {"compact": {"budget": 700, "chars": 4800, "recent": 1, "clip": 500},
+                "standard": {"budget": 2500, "chars": None, "recent": 3, "clip": 1500},
+                "full": {"budget": 1_000_000, "chars": None, "recent": None, "clip": None}}
+    _SECTIONS = (("constraint", "Rules that must hold"), ("decision", "Decisions already made"),
+                 ("blocker", "Open problems"), ("fact", "Key facts"),
+                 ("preference", "My preferences"), ("artifact", "Files involved"),
+                 ("tool_result", "Tool results"))
+
+    def portable(self, cid: str, size: str = "compact") -> dict[str, Any]:
+        """The chat's memory as one Markdown message to paste into any other AI.
+
+        It reuses the handoff selection (budgeted, most important first) but is
+        written for a chat box, not a ContextOS model: no store addresses and no
+        "fetch by address", which another tool cannot do.
+        """
+        spec = self.PORTABLE.get(size, self.PORTABLE["compact"])
+        conv = self.chats.get(cid) or {"title": "Chat", "messages": []}
+        ctx = self.ctx_for(cid)
+        budget = spec["budget"]
+        while True:
+            packet = ctx.handoff(direction="lateral", budget_tokens=budget)
+            text = self._render_portable(conv, packet, spec)
+            if not spec["chars"] or len(text) <= spec["chars"] or budget <= 100:
+                break
+            budget = int(budget * 0.8)
+        return {"text": text, "chars": len(text), "tokens": count_tokens(text),
+                "items": len(packet.units), "left_out": len(packet.omitted),
+                "size": size, "title": conv["title"]}
+
+    @staticmethod
+    def _labelled(u: Any) -> str:
+        """Models often save bare values ("10:00 AM") whose meaning lives in the
+        address (/project/hostel/checkout-time). Addresses are dropped from the
+        export, so the last segment comes along as a readable label."""
+        label = u.address.rstrip("/").rsplit("/", 1)[-1].replace("-", " ").replace("_", " ")
+        words = [w for w in label.lower().split() if len(w) > 2]
+        generic = {"step", "item", "note", "notes", "value", "info", "detail", "misc"}
+        if (not words or set(words) <= generic or re.search(r"\d", label)
+                or all(w in u.value.lower() for w in words)):
+            return u.value
+        return f"{label[:1].upper()}{label[1:]}: {u.value}"
+
+    def _render_portable(self, conv: dict[str, Any], packet: Any,
+                         spec: dict[str, Any]) -> str:
+        msgs = [m for m in conv["messages"] if m["content"].strip()]
+        L = [f"# Context: {conv['title']}", "",
+             "I'm continuing a conversation I started in another AI tool. Below is what "
+             "we established there. Treat it as already agreed - don't repeat it back. "
+             "Reply with one line saying what we're working on, then wait for my next "
+             "message.", "", "## Goal", packet.goal or conv["title"]]
+        for kind, title in self._SECTIONS:
+            vals = [self._labelled(u) for u in packet.units
+                    if u.kind == kind and u.value != packet.goal]
+            if vals:
+                L += ["", f"## {title}"] + [f"- {v}" for v in vals]
+
+        take = msgs if spec["recent"] is None else msgs[-2 * spec["recent"]:]
+        if take:
+            L += ["", "## Conversation so far" if spec["recent"] is None
+                  else "## Where we left off"]
+            for m in take:
+                body = m["content"].strip()
+                if spec["clip"] and len(body) > spec["clip"]:
+                    body = body[:spec["clip"]].rstrip() + " …"
+                who = "Me" if m["role"] == "user" else "AI"
+                L += ["", f"**{who}:** {body}"]
+        if packet.omitted:
+            L += ["", f"_{len(packet.omitted)} less important saved items were left out "
+                      "to keep this short. Ask me if something seems missing._"]
+        return "\n".join(L).strip() + "\n"
+
     # --------------------------------------------------------------- extract
     def _commit(self, text: str, source: str,
                 ctx: Optional[ContextOS] = None) -> list[dict[str, Any]]:
@@ -593,6 +667,16 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(eng.chats.get(cid))
                 elif action == "memory":
                     self._json(eng.memory(cid))
+                elif action == "portable":
+                    args = urllib.parse.parse_qs(query)
+                    out = eng.portable(cid, args.get("size", ["compact"])[0])
+                    if args.get("download", [""])[0]:
+                        name = re.sub(r"[^\w -]", "", out["title"])[:40] or "chat"
+                        self._send(200, out["text"].encode(), "text/markdown; charset=utf-8",
+                                   {"Content-Disposition":
+                                    f'attachment; filename="{name} - context.md"'})
+                    else:
+                        self._json(out)
                 elif action == "export":
                     title = re.sub(r"[^\w -]", "", eng.chats.get(cid)["title"])[:40]
                     self._send(200, eng.export(cid).encode(), "text/markdown; charset=utf-8",
