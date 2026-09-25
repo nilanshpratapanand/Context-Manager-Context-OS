@@ -1249,8 +1249,8 @@ def test_key_values_are_validated_before_touching_env():
     assert clean("GROQ_API_KEY", "  gsk_abcdefghijklmnop \n") == "gsk_abcdefghijklmnop"
     assert clean("GROQ_API_KEY", '"gsk_quoted_value_1234"') == "gsk_quoted_value_1234"
     assert clean("CLOUDFLARE_ACCOUNT_ID",
-                 "https://dash.cloudflare.com/e2d780ffed1fc2521622b5725862759a/home") == \
-        "e2d780ffed1fc2521622b5725862759a"
+                 "https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/home") == \
+        "0123456789abcdef0123456789abcdef"
     for name, bad in [("GROQ_API_KEY", "gsk_abc\nLLM_ROUTING=smart"),      # line injection
                       ("GROQ_API_KEY", "two words"),
                       ("PATH", "C:/evil"),                                   # not a key setting
