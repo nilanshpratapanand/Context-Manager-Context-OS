@@ -33,7 +33,8 @@ every conversation.
   carries the goal, rules, decisions, facts and where you left off, with no store
   addresses, and asks the other AI to confirm in one line. *Compact* stays under
   5,000 characters, the point where ChatGPT turns a paste into an attachment;
-  *Standard* is about 1k tokens; *Full* adds the whole transcript and is meant to be
+  *Standard* carries up to ~2,500 tokens of memory plus the last three exchanges;
+  *Full* adds the whole transcript and is meant to be
   downloaded as a `.md` file and attached. In tests, three other models answered
   follow-up questions correctly from the Compact paste alone.
 - **Memory panel.** What this chat's store holds. Delete anything wrong, and preview
