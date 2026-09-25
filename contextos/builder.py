@@ -101,13 +101,93 @@ def fix_hint(output: str) -> str:
     return ""
 
 
-class BuildRun:
+_NO_EXPORT = re.compile(r"(^|/)(\.contextos_memory\.db[^/]*|__pycache__|\.venv|venv|"
+                        r"node_modules|\.git|\.mypy_cache|\.pytest_cache)(/|$)")
+
+
+def site_entry(ws: Workspace) -> Optional[str]:
+    """The page to open for Preview, if the project is a website."""
+    if (ws.root / "index.html").is_file():
+        return "index.html"
+    pages = sorted(p for p in ws.root.rglob("*.html")
+                   if not _NO_EXPORT.search(p.relative_to(ws.root).as_posix()))
+    return pages[0].relative_to(ws.root).as_posix() if pages else None
+
+
+def export_zip(ws: Workspace, limit: int = 200_000_000) -> bytes:
+    """The project as a .zip, without ContextOS's own files or build caches."""
+    import io
+    import zipfile
+    buf, total = io.BytesIO(), 0
+    top = re.sub(r"[^\w.-]+", "-", ws.root.name) or "project"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(ws.root.rglob("*")):
+            rel = p.relative_to(ws.root).as_posix()
+            if not p.is_file() or _NO_EXPORT.search(rel) or p.is_symlink():
+                continue
+            total += p.stat().st_size
+            if total > limit:
+                raise ToolError("project is over 200 MB - open the folder instead")
+            z.write(p, f"{top}/{rel}")
+    return buf.getvalue()
+
+
+class _BuildInfo:
+    """What both live and archived builds can report."""
+    archived: bool
+    ws: Workspace
+
+    def summary(self) -> dict[str, Any]:
+        return {"id": self.id, "goal": self.goal, "workspace": str(self.ws.root),
+                "status": self.status, "started": self.started, "archived": self.archived,
+                "features": [{"name": r["name"], "passed": r["passed"]} for r in self.results],
+                "waiting": [p["kind"] for p in self.pending.values()],
+                "site": site_entry(self.ws)}
+
+    def record(self) -> dict[str, Any]:
+        """What the builds index keeps, so a build outlives a restart."""
+        return {"id": self.id, "goal": self.goal, "workspace": str(self.ws.root),
+                "status": self.status, "started": self.started, "plan": self.plan,
+                "results": [{k: r[k] for k in ("name", "passed", "rounds")}
+                            for r in self.results],
+                "changes": getattr(self, "changes", [])}
+
+
+
+class ArchivedBuild(_BuildInfo):
+    """A finished (or interrupted) build loaded from the index after a restart:
+    its plan, results and files, without the live event stream."""
+
+    archived = True
+
+    def __init__(self, rec: dict[str, Any]) -> None:
+        self.id, self.goal = rec["id"], rec["goal"]
+        self.ws = Workspace(rec["workspace"])
+        self.status = "interrupted" if rec.get("status") in ("running", "created") \
+            else rec.get("status", "done")
+        self.started = rec.get("started", 0)
+        self.plan, self.results = rec.get("plan") or {}, rec.get("results") or []
+        self.changes = rec.get("changes") or []
+        self.rec = rec
+        self.events: list[dict[str, Any]] = []
+        self.pending: dict[str, Any] = {}
+        self.stop = threading.Event()
+
+    def events_after(self, n: int, timeout: float = 0) -> list[dict[str, Any]]:
+        return []
+
+    def answer(self, aid: str, answer: dict[str, Any]) -> bool:
+        return False
+
+
+class BuildRun(_BuildInfo):
     def __init__(self, goal: str, workspace: str, env: dict[str, str], *,
                  pool: Optional[ModelPool] = None, connectors: Any = None,
                  auto_approve_tests: bool = True, research: bool = True,
                  review_plan: bool = True, max_features: int = 6,
-                 app_root: Optional[str] = None) -> None:
-        self.id = uuid.uuid4().hex[:10]
+                 app_root: Optional[str] = None, bid: Optional[str] = None) -> None:
+        self.id = bid or uuid.uuid4().hex[:10]
+        self.changes: list[dict[str, Any]] = []
         self.goal = goal.strip()
         self.ws = Workspace(str(check_workspace(workspace, app_root)))
         self.pool = pool or ModelPool(env)
@@ -138,11 +218,8 @@ class BuildRun:
                 self.cond.wait(timeout)
             return self.events[n:]
 
-    def summary(self) -> dict[str, Any]:
-        return {"id": self.id, "goal": self.goal, "workspace": str(self.ws.root),
-                "status": self.status, "started": self.started,
-                "features": [{"name": r["name"], "passed": r["passed"]} for r in self.results],
-                "waiting": [p["kind"] for p in self.pending.values()]}
+    archived = False
+    on_finish: Optional[Callable[["BuildRun"], None]] = None
 
     # --------------------------------------------------------- approvals
     def _wait_for(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -255,6 +332,11 @@ class BuildRun:
         finally:
             with self.cond:
                 self.cond.notify_all()
+            if self.on_finish:
+                try:
+                    self.on_finish(self)
+                except Exception:
+                    pass                          # the index is a convenience, not critical
 
     def _research(self) -> str:
         self._phase("research", "Searching the web, docs and papers")
@@ -395,6 +477,105 @@ network and no user input. Prefer the standard library. For Python use unittest,
                        "report": after, "tests_pass": ok})
             return f"Before fixes:\n{before}\n\nReviewer:\n{r.summary}\n\nAfter fixes:\n{after}"
         return before
+
+    # ------------------------------------------------------ follow-up changes
+    @classmethod
+    def resume(cls, rec: dict[str, Any], env: dict[str, str], **kw: Any) -> "BuildRun":
+        """Bring an archived build back to life so it can take change requests."""
+        run = cls(rec["goal"], rec["workspace"], env, research=False, review_plan=False,
+                  bid=rec["id"], **kw)
+        run.plan, run.results = rec.get("plan") or {}, rec.get("results") or []
+        run.changes = rec.get("changes") or []
+        run.started = rec.get("started", run.started)
+        run.status = "done"
+        return run
+
+    def change(self, request: str) -> None:
+        request = request.strip()
+        if len(request) < 3:
+            raise ToolError("describe the change you want")
+        if self.status in ("running", "created"):
+            raise ToolError("this build is still running - wait for it to finish or stop it")
+        self.stop.clear()
+        self.status = "running"
+        self.thread = threading.Thread(target=self._change, args=(request,), daemon=True)
+        self.thread.start()
+
+    def _change(self, request: str) -> None:
+        passed, summary, rounds = False, "", 0
+        try:
+            if not self.pool.ready():
+                raise ProviderError("no models configured - add an API key")
+            self.emit({"type": "change", "request": request})
+            self._phase("change", request[:120])
+            self.ctx.put(f"/task/changes/change-{len(self.changes) + 1}", request[:500],
+                         kind="goal", importance=0.95)
+            test_all = self.plan.get("test_all", "")
+            feats = "\n".join(f"- {f['name']}: {f['description']}"
+                               for f in self.plan.get("features", []))
+            task = (f"## Project goal\n{self.goal}\n\n## What exists\n"
+                    f"{self.plan.get('summary', '')}\n{feats}\n\n## Requested change\n"
+                    f"{request}\n\nMake this change in the existing project. Read the files "
+                    "involved first and keep changes focused. Add or update tests that prove "
+                    "the change" + (f", then run: {test_all}" if test_all else "") +
+                    ". Every existing test must keep passing. Finish with a short summary of "
+                    "what you changed.")
+            for rounds in range(1, 4):
+                r = self._agent(BUILD_TOOLS).run(task, "You are a careful software engineer "
+                                                 "making a requested change to an existing "
+                                                 "project.", lane="smart", max_steps=22)
+                summary = r.summary
+                if self.stop.is_set():
+                    raise InterruptedError
+                if not test_all:
+                    passed = r.status == "done"
+                    break
+                ok, output = self._run_cmd(test_all)
+                self.emit({"type": "verify", "feature": "your change + all tests",
+                           "command": test_all, "passed": ok, "output": clip(output, 2500),
+                           "round": rounds})
+                if ok:
+                    passed = True
+                    break
+                task = (f"The requested change isn't done: `{test_all}` fails when the "
+                        f"engine runs it:\n\n{clip(output, 3000)}\n{fix_hint(output)}\n"
+                        f"Fix the cause. The change requested was:\n{request}")
+            sec = security_scan(self.ws)
+            self.emit({"type": "security", "stage": "scan", "report": sec})
+            self.changes.append({"request": request, "passed": passed, "rounds": rounds,
+                                 "summary": summary[:1500], "at": time.time()})
+            self._append_report(request, passed, summary, sec)
+            self.status = "done"
+            self.emit({"type": "change_done", "request": request, "passed": passed,
+                       "summary": summary, "verified": bool(test_all)})
+        except InterruptedError:
+            self.status = "stopped"
+            self.emit({"type": "stopped"})
+        except Exception as e:
+            self.status = "done" if self.results else "failed"
+            self.emit({"type": "change_failed", "error": f"{type(e).__name__}: {e}"})
+        finally:
+            with self.cond:
+                self.cond.notify_all()
+            if self.on_finish:
+                try:
+                    self.on_finish(self)
+                except Exception:
+                    pass
+
+    def _append_report(self, request: str, passed: bool, summary: str, sec: str) -> None:
+        path = self.ws.root / "BUILD_REPORT.md"
+        text = path.read_text(encoding="utf-8") if path.exists() else "# Build report\n"
+        if "\n## Changes\n" not in text:
+            text += "\n\n## Changes\n"
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        test_all = self.plan.get("test_all", "")
+        verdict = ("PASS - all tests pass" if passed and test_all else
+                   "done (no test command to verify it)" if passed else "FAIL - tests still fail")
+        first = sec.splitlines()[0] if sec else ""
+        text += (f"\n### {stamp}: {request}\n\n- Result: {verdict}\n"
+                 f"- Security scan: {first}\n\n{summary.strip()}\n")
+        path.write_text(text, encoding="utf-8")
 
     def _report(self, brief: str, sec: str) -> None:
         self._phase("report", "Writing BUILD_REPORT.md")

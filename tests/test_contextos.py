@@ -1345,6 +1345,138 @@ def test_http_key_setup_saves_reloads_and_goes_live():
         eng.close()
 
 
+def test_export_zip_skips_internal_files_and_finds_site():
+    import io as _io
+    import zipfile
+    from contextos.builder import export_zip, site_entry
+    ws = _ws()
+    ws.write_file("index.html", "<h1>Hi</h1>")
+    ws.write_file("css/style.css", "h1{}")
+    for junk in (".contextos_memory.db", "__pycache__/x.pyc", ".venv/lib/a.py",
+                 "node_modules/m/i.js"):
+        p = ws.root / junk
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+    names = zipfile.ZipFile(_io.BytesIO(export_zip(ws))).namelist()
+    top = ws.root.name
+    assert sorted(names) == sorted([f"{top}/index.html", f"{top}/css/style.css"])
+    assert site_entry(ws) == "index.html"
+    ws2 = _ws()
+    ws2.write_file("docs/page.html", "<p>x</p>")
+    assert site_entry(ws2) == "docs/page.html"
+    assert site_entry(_ws()) is None
+
+
+def test_http_site_preview_is_sandboxed_and_builds_survive_restart():
+    import json as _j
+    import urllib.error
+    from contextos.builder import BuildRun
+    from contextos.server import Engine, Handler
+    httpd, base = _http_server()
+    eng = Handler.engine
+    try:
+        run = BuildRun("A tiny static site for testing", tempfile.mkdtemp(), {},
+                       pool=_scripted_build_pool())
+        run.ws.write_file("index.html", "<link rel=stylesheet href=style.css><h1>Hi</h1>")
+        run.ws.write_file("style.css", "h1{color:red}")
+        run.status = "done"
+        eng.builds[run.id] = run
+        eng._save_builds()
+        r = _req(base + f"/api/builds/{run.id}/site/index.html")
+        assert b"<h1>Hi</h1>" in r.read()
+        csp = r.headers["Content-Security-Policy"]
+        assert csp.startswith("sandbox") and "allow-same-origin" not in csp
+        # The sandboxed page's own asset requests carry Origin: null and must work...
+        assert b"red" in _req(base + f"/api/builds/{run.id}/site/style.css",
+                              headers={"Origin": "null"}).read()
+        # ...but that exception is for site files only, never the API.
+        try:
+            _req(base + "/api/builds", headers={"Origin": "null"})
+            raise AssertionError("null origin reached the API")
+        except urllib.error.HTTPError as e:
+            assert e.code == 403
+        for bad in ("../../etc/passwd", ".contextos_memory.db"):
+            try:
+                _req(base + f"/api/builds/{run.id}/site/{bad}")
+                raise AssertionError(bad)
+            except urllib.error.HTTPError as e:
+                assert e.code in (400, 404)
+        info = _j.load(_req(base + f"/api/builds/{run.id}"))
+        assert info["site"] == "index.html"
+        assert _req(base + f"/api/builds/{run.id}/download").headers[
+            "Content-Type"] == "application/zip"
+        # A fresh engine on the same data folder still knows the build.
+        again = Engine(str(eng.data), {}, offline=True)
+        try:
+            b = again.builds[run.id]
+            assert b.archived and b.summary()["site"] == "index.html"
+            assert b.summary()["status"] == "done"
+        finally:
+            again.close()
+    finally:
+        httpd.shutdown()
+        eng.close()
+
+
+def test_follow_up_change_is_built_verified_and_reported():
+    from contextos.builder import BuildRun
+    from contextos.tools import ToolError
+    run = BuildRun("Make an adder library", tempfile.mkdtemp(), {},
+                   pool=_scripted_build_pool(), research=False, review_plan=False)
+    run.start()
+    assert _wait_status(run) == "done"
+    run.pool = _scripted_build_pool()           # fresh script for the change round
+    n = len(run.events)
+    run.change("Also make add() accept three numbers")
+    with raises(ToolError):                      # one thing at a time
+        run.change("another change")
+    import time as _t
+    for _ in range(600):
+        if run.status == "done" and any(e["type"] == "change_done" for e in run.events[n:]):
+            break
+        _t.sleep(0.05)
+    new = run.events[n:]
+    types = [e["type"] for e in new]
+    assert types[0] == "change" and "verify" in types and "change_done" in types
+    done = next(e for e in new if e["type"] == "change_done")
+    assert done["passed"] and done["verified"]
+    assert run.changes[0]["request"] == "Also make add() accept three numbers"
+    report = (run.ws.root / "BUILD_REPORT.md").read_text()
+    assert "## Changes" in report and "accept three numbers" in report and "PASS" in report
+    assert run.record()["changes"][0]["passed"]
+
+
+def test_change_on_archived_build_resumes_it():
+    import json as _j
+    import urllib.error
+    from contextos.server import Handler
+    httpd, base = _http_server()
+    eng = Handler.engine
+    try:
+        from contextos.builder import ArchivedBuild
+        ws = tempfile.mkdtemp()
+        rec = {"id": "abcdef0123", "goal": "Make an adder library", "workspace": ws,
+               "status": "done", "started": 1.0, "plan": {"test_all": "", "features": []},
+               "results": [{"name": "adder", "passed": True, "rounds": 1}]}
+        eng.builds[rec["id"]] = ArchivedBuild(rec)
+        try:                                      # offline server: refused plainly
+            _req(base + "/api/builds/abcdef0123/change", {"request": "make it faster"})
+            raise AssertionError("offline change accepted")
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+        eng.offline = False
+        s = _j.load(_req(base + "/api/builds/abcdef0123/change", {"request": "make it faster"}))
+        assert s["id"] == "abcdef0123" and not s["archived"]
+        run = eng.builds["abcdef0123"]
+        assert _wait_status(run, ("done", "failed")) in ("done", "failed")
+        assert any(e["type"] == "change_failed" and "no models" in e["error"]
+                   for e in run.events)           # no keys here: says so, stays usable
+        assert run.status == "done"
+    finally:
+        httpd.shutdown()
+        eng.close()
+
+
 def test_route_pin_goes_first():
     e = _offline_engine()
     r = e.chat("hi", route="offline-c")

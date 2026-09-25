@@ -302,11 +302,18 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
 .tag.fail{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad)}
 .bitem{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;font-size:13.5px;cursor:pointer}
 .bitem:hover,.bitem.active{background:var(--soft)}
-.bitem span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bitem .bname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .srow{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);
   border-radius:10px;margin-bottom:6px;font-size:13px}
 .srow .d{flex:1;min-width:0}
 .srow small{color:var(--dim);display:block;word-break:break-word}
+
+.getbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.bcompose{position:sticky;bottom:0;background:var(--bg);padding:12px 0 4px;margin-top:18px}
+.bcompose .composer{max-width:none}
+.bcompose[hidden]{display:none}
+.you{align-self:flex-end;background:var(--user);border:1px solid var(--user-line);border-radius:14px;
+  padding:8px 12px;margin:18px 0 6px auto;max-width:85%;width:fit-content;white-space:pre-wrap}
 
 /* ------------------------------------------------------------- API keys */
 .kcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
@@ -1196,11 +1203,11 @@ async function loadBuilds(){
 function renderBuilds(){
   const el = $('#buildsList');
   if(!B.list.length){ el.innerHTML = ''; return; }
-  const dot = s => s === 'done' ? 'ok' : s === 'running' || s === 'created' ? 'warn' : 'bad';
+  const dot = s => s === 'done' ? 'ok' : s === 'running' || s === 'created' ? 'warn' : s === 'interrupted' ? '' : 'bad';
   el.innerHTML = '<div class="group">Builds</div>' + B.list.slice().reverse().map(b =>
     `<div class="bitem${b.id === B.id ? ' active' : ''}" data-build="${b.id}" role="button" tabindex="0"
       title="${esc(b.status)}${b.waiting.length ? ' - waiting for you' : ''}">
-      <span class="dot ${dot(b.status)}"></span><span>${esc(b.goal)}</span>
+      <span class="dot ${dot(b.status)}"></span><span class="bname">${esc(b.goal)}</span>
       ${b.waiting.length ? '<span class="badge">needs you</span>' : ''}</div>`).join('');
 }
 $('#buildsList').addEventListener('click', e => {
@@ -1265,19 +1272,87 @@ async function openBuild(id){
   $('#title').textContent = info.goal;
   $('#buildInner').innerHTML = `<div class="bhead"><h2>${esc(info.goal)}</h2>
       <span class="pill ${esc(info.status)}" id="bStatus">${esc(info.status)}</span>
-      <button class="btn" id="bFiles">${icon('folder')} Files</button>
       <button class="btn" id="bStop">Stop</button></div>
     <div class="ev faint">Project folder: <code>${esc(info.workspace)}</code></div>
-    <div id="timeline" aria-live="polite"></div>`;
+    ${getBar(info)}
+    <div id="timeline" aria-live="polite"></div>
+    <div class="bcompose" id="bCompose" hidden>
+      <form class="composer" id="bChangeForm">
+        <label class="sr" for="bChange">Ask for a change</label>
+        <textarea id="bChange" rows="1" placeholder="Ask for a change or a new feature, e.g. add a contact section…"></textarea>
+        <button type="submit" id="bChangeBtn" aria-label="Send change">${icon('send')}</button>
+      </form>
+      <div class="hint">ContextOS makes the change, updates the tests and runs them all before calling it done.</div>
+    </div>`;
+  B.info = info;
+  if(info.archived) renderArchived(info);
   $('#bStop').onclick = async () => {
     if(!confirm('Stop this build?')) return;
     await api(`/api/builds/${id}/stop`, {});
     // The model call in progress can't be interrupted; say so instead of looking stuck.
     const b = $('#bStop'); b.disabled = true; b.textContent = 'Stopping… finishing the current step';
   };
-  $('#bFiles').onclick = () => showFiles(id);
+  wireChangeBox(id);
   setBuildStatus(info.status);
-  streamBuild(id);
+  if(!info.archived) streamBuild(id);
+}
+
+// ------------------------------------------------------ getting the project
+function getBar(info){
+  return `<div class="getbar">
+    <button class="btn primary" data-dl>${icon('download')} Download .zip</button>
+    <button class="btn" data-openfolder>${icon('folder')} Open folder</button>
+    ${info.site ? `<button class="btn" data-preview="${esc(info.site)}">Preview site ↗</button>` : ''}
+    <button class="btn" data-files>Browse files</button>
+    <button class="btn" data-open-report>Open report</button></div>`;
+}
+$('#buildInner').addEventListener('click', async e => {
+  if(!B.id) return;
+  if(e.target.closest('[data-dl]')) download(`/api/builds/${B.id}/download`);
+  else if(e.target.closest('[data-files]')) showFiles(B.id);
+  else if(e.target.closest('[data-openfolder]')){
+    const r = await api(`/api/builds/${B.id}/open`, {});
+    toast(r.error ? r.error : 'Opened in your file manager');
+  } else if(e.target.closest('[data-preview]')){
+    // Opens in its own tab; the server sandboxes it, so it can't reach this app's API.
+    const f = e.target.closest('[data-preview]').dataset.preview;
+    window.open(`/api/builds/${B.id}/site/${f.split('/').map(encodeURIComponent).join('/')}`,
+                '_blank', 'noopener');
+  }
+});
+function renderArchived(info){
+  const p = info.plan || {}, res = info.results || [];
+  let html = `<div class="card2"><h3>Finished earlier</h3><div style="color:var(--dim)">The live timeline isn't kept
+    after a restart; the plan, results and files are.</div></div>`;
+  if(p.features && p.features.length) html += planCard(p);
+  if(res.length) html += `<div class="card2 ${res.every(r => r.passed) ? 'pass' : 'fail'}"><h3>${res.filter(r => r.passed).length} of
+    ${res.length} features pass their tests</h3><ol>${res.map(r => `<li><span class="tag ${r.passed ? 'pass' : 'fail'}">${r.passed ? 'PASS' : 'FAIL'}</span>
+    ${esc(r.name)}</li>`).join('')}</ol></div>`;
+  for(const c of (info.changes || [])){
+    html += `<div class="you">${esc(c.request)}</div><div class="card2 ${c.passed ? 'pass' : 'fail'}">
+      <span class="tag ${c.passed ? 'pass' : 'fail'}">${c.passed ? 'DONE' : 'FAILED'}</span>
+      <div class="md" style="margin-top:6px">${md(c.summary || '')}</div></div>`;
+  }
+  $('#timeline').innerHTML = html;
+}
+function wireChangeBox(id){
+  const ta = $('#bChange'), form = $('#bChangeForm');
+  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'; });
+  ta.addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); form.requestSubmit(); } });
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const request = ta.value.trim(); if(!request) return;
+    $('#bChangeBtn').disabled = true;
+    const r = await api(`/api/builds/${id}/change`, {request});
+    $('#bChangeBtn').disabled = false;
+    if(r.error){ toast(r.error); return; }
+    ta.value = ''; ta.style.height = 'auto';
+    if(B.info && B.info.archived){ B.info.archived = false; B.seq = 0; }
+    setBuildStatus('running');
+    const b = $('#bStop'); if(b){ b.disabled = false; b.textContent = 'Stop'; }
+    if(!B.ctrl || B.ctrl.signal.aborted) streamBuild(id);
+    loadBuilds();
+  };
 }
 async function streamBuild(id){
   const ctrl = new AbortController(); B.ctrl = ctrl;
@@ -1307,12 +1382,17 @@ async function streamBuild(id){
     }
     const st = await api(`/api/builds/${id}`).catch(() => ({}));
     if(st.status) setBuildStatus(st.status);
-    if(['done', 'failed', 'stopped'].includes(st.status)){ loadBuilds(); return; }
+    if(['done', 'failed', 'stopped'].includes(st.status)){
+      if(B.ctrl === ctrl) B.ctrl = null;        // a change request starts a new stream
+      loadBuilds(); return;
+    }
   }
 }
 function setBuildStatus(s){
   const el = $('#bStatus'); if(el){ el.textContent = s; el.className = 'pill ' + s; }
-  if(['done', 'failed', 'stopped'].includes(s)){ const b = $('#bStop'); if(b) b.disabled = true; }
+  const finished = ['done', 'failed', 'stopped', 'interrupted'].includes(s);
+  const b = $('#bStop'); if(b) b.hidden = finished;
+  const c = $('#bCompose'); if(c) c.hidden = !finished;
 }
 function tl(html){
   const t = $('#timeline'); if(!t) return null;
@@ -1366,14 +1446,36 @@ function renderBuildEvent(ev){
         ${ev.tests_pass === false ? '<div class="ev err">Tests failed after the fixes.</div>' : ''}</div>`); break;
     case 'done':
       tl(`<div class="card2 pass"><h3>Done: ${ev.passed} of ${ev.total} features pass their tests</h3>
-        <div>The full report is <code>BUILD_REPORT.md</code> in the project folder.</div>
-        <div class="btns"><button class="btn primary" data-open-report>Open report</button></div></div>`);
+        <div>Get your project below, or ask for a change underneath. The full report is <code>BUILD_REPORT.md</code>.</div>
+        ${getBar(Object.assign({}, B.info || {}, {site: ev.site !== undefined ? ev.site : (B.info || {}).site}))}</div>`);
+      setBuildStatus('done'); loadBuilds(); refreshSite(); break;
+    case 'change':
+      tl(`<div class="you">${esc(ev.request)}</div>`); setBuildStatus('running'); break;
+    case 'change_done':
+      tl(`<div class="card2 ${ev.passed ? 'pass' : 'fail'}"><h3>${ev.passed ? (ev.verified ? 'Change done - all tests pass' : 'Change done')
+          : 'Change not finished - tests still fail'}</h3><div class="md">${md(ev.summary || '')}</div>
+        ${getBar(B.info || {})}</div>`);
+      setBuildStatus('done'); loadBuilds(); refreshSite(); break;
+    case 'change_failed':
+      tl(`<div class="card2 fail"><h3>Couldn't make the change</h3>${esc(ev.error)}</div>`);
       setBuildStatus('done'); loadBuilds(); break;
     case 'failed':
       tl(`<div class="card2 fail"><h3>Build failed</h3>${esc(ev.error)}</div>`); setBuildStatus('failed'); loadBuilds(); break;
     case 'stopped':
       tl(`<div class="card2 fail"><h3>Stopped</h3></div>`); setBuildStatus('stopped'); loadBuilds(); break;
   }
+}
+async function refreshSite(){
+  // A build or change may have created the first .html page.
+  if(!B.id) return;
+  const info = await api(`/api/builds/${B.id}`).catch(() => null);
+  if(!info || info.error) return;
+  B.info = Object.assign(B.info || {}, {site: info.site});
+  if(info.site) document.querySelectorAll('.getbar').forEach(bar => {
+    if(!bar.querySelector('[data-preview]'))
+      bar.querySelector('[data-openfolder]').insertAdjacentHTML('afterend',
+        ` <button class="btn" data-preview="${esc(info.site)}">Preview site ↗</button>`);
+  });
 }
 function planCard(p, edited){
   return `<div class="card2"><h3>Plan${edited ? ' (edited)' : ''}</h3><div>${esc(p.summary)}</div>
@@ -1413,7 +1515,7 @@ function renderApproval(ev){
 }
 async function answer(aid, body){ await api(`/api/builds/${B.id}/answer`, {id:aid, ...body}); }
 $('#buildInner').addEventListener('click', e => {
-  if(e.target.closest('[data-open-report]')) viewFile(B.id, 'BUILD_REPORT.md'); });
+  if(e.target.closest('[data-open-report]') && B.id) viewFile(B.id, 'BUILD_REPORT.md'); });
 async function showFiles(id){
   const r = await api(`/api/builds/${id}/files`);
   const lines = String(r.files || '').split('\n').filter(l => l && l !== '(empty)');

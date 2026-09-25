@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import threading
@@ -143,6 +144,7 @@ class Engine:
         self.current = self.order[0] if self.order else None
         self._default: Optional[str] = None
         self.builds: dict[str, Any] = {}
+        self._load_builds()
         self.connectors: Any = None
         self.env_path = ".env"
         self.auto_offline = False
@@ -677,8 +679,59 @@ class Engine:
                        max_features=int(body.get("max_features") or 6),
                        app_root=str(HERE.parent))
         self.builds[run.id] = run
+        run.on_finish = lambda r: self._save_builds()
+        self._save_builds()
         run.start()
         return run.summary()
+
+    # A small index so builds - and the way to their files - survive a restart.
+    def _index(self) -> pathlib.Path:
+        return self.data / "builds.json"
+
+    def _load_builds(self) -> None:
+        from .builder import ArchivedBuild
+        try:
+            recs = json.loads(self._index().read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        for rec in recs if isinstance(recs, list) else []:
+            try:
+                if pathlib.Path(rec["workspace"]).is_dir():
+                    self.builds[rec["id"]] = ArchivedBuild(rec)
+            except (KeyError, TypeError, OSError):
+                continue
+
+    def _save_builds(self) -> None:
+        recs = [b.record() for b in self.builds.values()][-200:]
+        tmp = self._index().with_suffix(".tmp")
+        tmp.write_text(json.dumps(recs, indent=1), encoding="utf-8")
+        tmp.replace(self._index())
+
+    def change_build(self, bid: str, request: str) -> dict[str, Any]:
+        """A follow-up change to a finished build, in the same project and memory."""
+        from .builder import BuildRun
+        if self.offline:
+            raise ToolError("changes need real models - add an API key first")
+        run = self.build(bid)
+        if run.archived:                          # loaded after a restart: bring it back
+            run = BuildRun.resume(run.record(), self.env, connectors=self._connectors(),
+                                  app_root=str(HERE.parent))
+            self.builds[bid] = run
+        run.on_finish = lambda r: self._save_builds()
+        run.change(request)
+        self._save_builds()
+        return run.summary()
+
+    def open_folder(self, bid: str) -> None:
+        """Show the project in Explorer / Finder / the file manager. Only ever a
+        build's own workspace, never a path from the request."""
+        import subprocess
+        import sys as _sys
+        path = str(self.build(bid).ws.root)
+        if _sys.platform == "win32":
+            os.startfile(path)                                   # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["open" if _sys.platform == "darwin" else "xdg-open", path])
 
     def build(self, bid: str) -> Any:
         run = self.builds.get(bid)
@@ -703,6 +756,11 @@ class Engine:
 
 _CONV = re.compile(r"^/api/conversations/([0-9a-f]{12})(?:/([a-z]+))?$")
 _BUILD = re.compile(r"^/api/builds/([0-9a-f]{10})(?:/([a-z]+))?$")
+_SITE = re.compile(r"^/api/builds/([0-9a-f]{10})/site/(.*)$")
+# Generated pages run with an opaque origin: they can load their own files but
+# can't call this API (which holds your keys) or read its responses.
+_SITE_CSP = ("sandbox allow-scripts allow-forms allow-popups allow-modals; "
+             "default-src 'self' 'unsafe-inline' data: blob: https:; connect-src https:")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -746,6 +804,8 @@ class Handler(BaseHTTPRequestHandler):
         if host not in ("127.0.0.1", "localhost"):
             return False
         origin = self.headers.get("Origin")
+        if self.command == "GET" and _SITE.match(self.path.partition("?")[0]):
+            return True           # a sandboxed preview's own assets (Origin: null)
         if origin and origin not in (f"http://127.0.0.1:{self.port}",
                                      f"http://localhost:{self.port}"):
             return False
@@ -779,14 +839,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"skills": eng.skills_list()})
             elif path == "/api/keys":
                 self._json(eng.keys_status())
+            elif m := _SITE.match(path):
+                self._serve_site(eng.build(m.group(1)), urllib.parse.unquote(m.group(2)))
             elif m := _BUILD.match(path):
                 bid, action = m.groups()
                 run = eng.build(bid)
                 args = urllib.parse.parse_qs(query)
                 if action is None:
-                    self._json({**run.summary(), "plan": run.plan, "results": run.results})
+                    self._json({**run.summary(), "plan": run.plan, "results": run.results,
+                                "changes": getattr(run, "changes", [])})
                 elif action == "events":
                     self._stream_build(run, int(args.get("after", ["0"])[0] or 0))
+                elif action == "download":
+                    from .builder import export_zip
+                    name = re.sub(r"[^\w.-]+", "-", run.ws.root.name)[:60] or "project"
+                    self._send(200, export_zip(run.ws), "application/zip",
+                               {"Content-Disposition": f'attachment; filename="{name}.zip"'})
                 elif action == "files":
                     self._json({"files": run.ws.list_files(".", "4")})
                 elif action == "file":
@@ -856,6 +924,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == "stop":
                     run.stop.set()
                     self._json({"ok": True})
+                elif action == "open":
+                    eng.open_folder(bid)
+                    self._json({"ok": True})
+                elif action == "change":
+                    self._json(eng.change_build(bid, str(body.get("request", ""))))
                 else:
                     self._json({"error": "not found"}, 404)
             elif self.path == "/api/conversations":
@@ -888,6 +961,21 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             traceback.print_exc()
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
+    def _serve_site(self, run: Any, rel: str) -> None:
+        import mimetypes
+        p = run.ws.path(rel or "index.html")          # workspace-bound, protected paths refused
+        if p.is_dir():
+            p = p / "index.html"
+        if not p.is_file():
+            self._send(404, b"not found", "text/plain")
+            return
+        ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
+            ctype += "; charset=utf-8"
+        self._send(200, p.read_bytes(), ctype,
+                   {"Content-Security-Policy": _SITE_CSP, "X-Content-Type-Options": "nosniff",
+                    "Referrer-Policy": "no-referrer"})
 
     def _stream_build(self, run: Any, after: int) -> None:
         """Tail a build's events as NDJSON. Closing the connection doesn't stop the

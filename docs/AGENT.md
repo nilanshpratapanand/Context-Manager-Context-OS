@@ -6,7 +6,7 @@ Give ContextOS a goal and an empty folder. It researches the topic, plans the pr
 features, and builds them one at a time, **running each feature's tests before moving
 on**. Then it reviews the code for security problems and writes a report.
 
-**Contents:** [Start a build](#start-a-build) · [The phases](#the-phases) · [Tools](#tools-the-agent-can-use) · [Safety](#safety-model) · [Connectors (MCP)](#connectors-mcp) · [Skills](#skills) · [Terminal](#from-the-terminal) · [API](#http-api) · [Limits](#limits)
+**Contents:** [Start a build](#start-a-build) · [The phases](#the-phases) · [Getting your project](#getting-your-project) · [Asking for changes](#asking-for-changes) · [Tools](#tools-the-agent-can-use) · [Safety](#safety-model) · [Connectors (MCP)](#connectors-mcp) · [Skills](#skills) · [Terminal](#from-the-terminal) · [API](#http-api) · [Limits](#limits)
 
 ---
 
@@ -41,6 +41,38 @@ prompt holds the task, the tools, skill names, the most relevant items from the 
 **ContextOS memory**, the current content of the two files it is working on, and only
 the last few steps in full. After six steps of only reading, it is told to act. That keeps prompts small on
 free tiers and lets any model take over mid-feature.
+
+## Getting your project
+
+Every build page, and the *Done* card, has:
+
+| Button | Does |
+|---|---|
+| **Download .zip** | The whole project, minus ContextOS's own files (its memory database, `__pycache__`, `.venv`, `node_modules`, `.git`) |
+| **Open folder** | Opens the project folder in Explorer, Finder or your file manager |
+| **Preview site ↗** | For web projects: opens the site in a new tab. It is **sandboxed**: the page runs with its own isolated origin, so generated code can't call ContextOS's API or use your keys |
+| **Browse files** / **Open report** | Read any file, or `BUILD_REPORT.md`, right in the app |
+
+The files live in the project folder shown under the title. By default that's
+`chat_data/builds/<name>/` in the ContextOS folder. Builds are kept in
+`chat_data/builds.json`, so after a restart they're still in the sidebar with their
+plan, results, changes and these buttons (the step-by-step timeline isn't kept).
+
+## Asking for changes
+
+Under every finished build, including ones from before a restart, there is a box like
+a chat input. Type a change, e.g. *"add a contact section with an email link"* or
+*"export to CSV too"*. ContextOS then:
+
+1. makes the change in the same project, with the same memory, using the smart models;
+2. asks the agent to add or update tests that prove it;
+3. **runs the whole test suite itself**. If it fails, the agent gets the error, a named
+   likely cause and up to 2 more rounds;
+4. scans for security issues, then adds a dated entry under **Changes** in
+   `BUILD_REPORT.md`.
+
+Changes appear in the same timeline under the original build. The same safety rules
+apply. One change runs at a time.
 
 ## Tools the agent can use
 
@@ -162,10 +194,14 @@ Ctrl+C stops after the current step.
 | `POST` | `/api/builds/<id>/answer` | `{id, allow, plan?}`: answer a plan review or approval |
 | `POST` | `/api/builds/<id>/stop` | Stop after the current step |
 | `GET` | `/api/builds/<id>/files`, `/file?path=` | Browse the project (read-only, inside the folder) |
+| `GET` | `/api/builds/<id>/download` | The project as a `.zip` |
+| `POST` | `/api/builds/<id>/open` | Open the project folder in the file manager |
+| `GET` | `/api/builds/<id>/site/<path>` | Sandboxed site preview (`Content-Security-Policy: sandbox`) |
+| `POST` | `/api/builds/<id>/change` | `{request}`: a follow-up change, streamed as events |
 | `GET` | `/api/connectors`, `POST /api/connectors/reload` | MCP status |
 | `GET` | `/api/skills` | Installed skills |
 
-Event types: `phase`, `step`, `observation`, `model_failed`, `research`, `plan`,
+Event types: `phase`, `change`, `change_done`, `change_failed`, `step`, `observation`, `model_failed`, `research`, `plan`,
 `plan_review`, `approval`, `answered`, `auto_approved`, `verify`, `security`, `done`,
 `failed`, `stopped`.
 
