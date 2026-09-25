@@ -144,6 +144,8 @@ class Engine:
         self._default: Optional[str] = None
         self.builds: dict[str, Any] = {}
         self.connectors: Any = None
+        self.env_path = ".env"
+        self.auto_offline = False
 
     # ------------------------------------------------------------- providers
     def _lanes(self) -> tuple[list[str], list[str]]:
@@ -573,7 +575,66 @@ class Engine:
         return {"version": __version__, "offline": self.offline,
                 "providers": self.provider_info(), "events": self.events[-30:],
                 "budget": self.budget,
-                "routing": {"mode": self.mode, "threshold": self.threshold}}
+                "routing": {"mode": self.mode, "threshold": self.threshold},
+                "needs_setup": not any(p.available(self.env) for p in PROVIDERS.values()),
+                "auto_offline": self.auto_offline}
+
+    # --------------------------------------------------------------- API keys
+    def keys_status(self) -> dict[str, Any]:
+        from .keys import status
+        return {"providers": status(self.env), "offline": self.offline,
+                "auto_offline": self.auto_offline, "env_file": str(pathlib.Path(self.env_path).resolve())}
+
+    def save_keys(self, values: dict[str, Any]) -> dict[str, Any]:
+        from .keys import KeySetupError, clean, warn, write_env
+        try:
+            updates = {str(k): clean(str(k), str(v or "")) for k, v in values.items()}
+        except KeySetupError as e:
+            raise ToolError(str(e)) from None
+        if not updates:
+            raise ToolError("nothing to save")
+        write_env(self.env_path, updates)
+        warnings = [w for k, v in updates.items() if (w := warn(k, v))]
+        self.reload_env()
+        return {**self.keys_status(), "warnings": warnings}
+
+    def test_key(self, pid: str, values: dict[str, Any]) -> list[dict[str, Any]]:
+        from .keys import KeySetupError, test_provider
+        try:
+            return test_provider(pid, {str(k): str(v or "") for k, v in values.items()},
+                                 self.env)
+        except KeySetupError as e:
+            raise ToolError(str(e)) from None
+
+    def reload_env(self) -> None:
+        """Pick up .env changes without a restart."""
+        old = self.env
+        self.env = load_env(self.env_path)
+        changed = [n for n, p in PROVIDERS.items()
+                   if old.get(p.key_env) != self.env.get(p.key_env)]
+        self.cooldown.clear(changed)                 # a new key deserves a fresh try
+        if self.offline and self.auto_offline and                 any(p.available(self.env) for p in PROVIDERS.values()):
+            self._go_live()
+        self.smart, self.fast = self._lanes()
+        self.current = self.order[0] if self.order else None
+        if self.connectors:
+            self.connectors.close()
+            self.connectors = None
+
+    def _go_live(self) -> None:
+        """Offline only because there were no keys, and now there are: switch to
+        real models and to the real chat folder (simulated chats stay apart)."""
+        for c in self._ctxs.values():
+            c.close()
+        self._ctxs.clear()
+        self._locks.clear()
+        self.chats.close()
+        if self.data.name == "offline":
+            self.data = self.data.parent
+        (self.data / "ctx").mkdir(parents=True, exist_ok=True)
+        self.chats = ChatStore(str(self.data / "chats.db"))
+        self._default = None
+        self.offline = self.auto_offline = False
 
     def toggle_failure(self, name: str) -> bool:
         if name in self.forced_failures:
@@ -716,6 +777,8 @@ class Handler(BaseHTTPRequestHandler):
                                         "arxiv_search", "arxiv_read"]})
             elif path == "/api/skills":
                 self._json({"skills": eng.skills_list()})
+            elif path == "/api/keys":
+                self._json(eng.keys_status())
             elif m := _BUILD.match(path):
                 bid, action = m.groups()
                 run = eng.build(bid)
@@ -775,6 +838,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_chat(body)
             elif self.path == "/api/builds":
                 self._json(eng.start_build(body))
+            elif self.path == "/api/keys/save":
+                self._json(eng.save_keys(body.get("values") or {}))
+            elif self.path == "/api/keys/test":
+                self._json({"rows": eng.test_key(str(body.get("provider", "")),
+                                                 body.get("values") or {})})
             elif self.path == "/api/connectors/reload":
                 if eng.connectors:
                     eng.connectors.close()
@@ -870,12 +938,15 @@ class Handler(BaseHTTPRequestHandler):
 def serve(data: str, port: int, offline: bool, budget: int, env_path: str,
           open_browser: bool = True) -> None:
     env = load_env(env_path)
+    auto_offline = False
     if not offline and not any(p.available(env) for p in PROVIDERS.values()):
-        print("No provider keys found in .env - starting in offline mode instead.")
-        offline = True
+        print("No provider keys found in .env - starting in offline mode. Add a key in the "
+              "app (Set up models) and it switches to real models without a restart.")
+        offline = auto_offline = True
     # Simulated chats never mix with real ones.
     data_dir = str(pathlib.Path(data) / "offline") if offline else data
     engine = Engine(data_dir, env, offline, budget)
+    engine.env_path, engine.auto_offline = env_path, auto_offline
     Handler.engine, Handler.port = engine, port
 
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)

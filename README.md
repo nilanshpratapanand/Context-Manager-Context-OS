@@ -9,7 +9,7 @@ A local chat app, context engine and build agent that runs on free AI models. It
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen)](requirements.txt)
 [![Release](https://img.shields.io/github/v/release/nilanshpratapanand/Context-Manager-Context-OS)](https://github.com/nilanshpratapanand/Context-Manager-Context-OS/releases/latest)
-[![Tests: 94 passing](https://img.shields.io/badge/tests-94%20passing-brightgreen)](tests/test_contextos.py)
+[![Tests: 98 passing](https://img.shields.io/badge/tests-98%20passing-brightgreen)](tests/test_contextos.py)
 [![Free models](https://img.shields.io/badge/models-free%20tier%20only-8A2BE2)](docs/CONFIGURATION.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -41,6 +41,7 @@ ContextOS keeps the **memory of a conversation in your own app, not inside a mod
 | **Build mode** | Give it a goal and it researches (web, docs, arXiv papers), plans features, then builds them one at a time, **running each feature's tests before moving on**. Then a security review and a report. See [Build mode](#build-mode). |
 | **Connectors (MCP)** | Connect any MCP server via `mcp.json` (the same format as Claude Desktop). Its tools become available to builds. |
 | **Skills** | Reusable instructions in the open `SKILL.md` format. Three are bundled; add your own. |
+| **Key setup in the app** | Sign up with each provider, paste your key, test it and save it. `.env` is written for you and models reload without a restart. |
 | **7 free providers** | Groq, Google Gemini, OpenRouter, NVIDIA, Cloudflare, Mistral and Cohere, plus Ollama for offline use. None of them need a credit card. |
 | **Zero dependencies** | Pure Python standard library and SQLite, with no build step. The installer sets everything up. |
 
@@ -68,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/nilanshpratapanand/Context-Manager-
 | 2. Download | `git clone` if Git is installed, otherwise the GitHub zip | `git clone`, otherwise the tarball via curl or wget |
 | 3. Environment | Private `.venv` + `pip install -r requirements.txt` | Same |
 | 4. Settings | Creates `.env` from `.env.example` | Same |
-| 5. Self-test | Runs the 94 tests | Same |
+| 5. Self-test | Runs the 98 tests | Same |
 | 6. Finish | Desktop shortcut, opens `.env` in Notepad, starts the app | Offers to start the app |
 
 It installs to `%USERPROFILE%\ContextOS` or `~/ContextOS`. **Run it again to update**: your `.env` keys and your chats are never touched.
@@ -110,7 +111,9 @@ The chat opens at **http://127.0.0.1:8000**.
 
 ## Get free API keys
 
-You need a key from **at least one** provider. Two or three make the fallback useful. All of these are free with no credit card. Paste each key into `.env`.
+You need a key from **at least one** provider. Two or three make the fallback useful. All of these are free with no credit card.
+
+**Easiest: do it in the app.** Click the **key icon** (bottom left) or **Set up free models** on the welcome screen. Each provider card links to its signup page, lists the steps, and has **Test** and **Save** buttons. Saving writes `.env` for you, and the models work straight away with no restart. Saved keys are never shown again, only their last four characters. You can also edit `.env` by hand.
 
 | Provider | Get a key | Why use it |
 |---|---|---|
@@ -222,7 +225,7 @@ ContextOS/
 │   ├── budget.py / handoff.py  token-budget packing, handoff packets
 │   ├── mcp_server.py / cli.py  MCP server and command line
 │   └── bench.py / demo.py      benchmark and demo
-├── tests/                      94 tests, standard library only
+├── tests/                      98 tests, standard library only
 └── docs/                       configuration, API, research
 ```
 

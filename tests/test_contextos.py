@@ -1244,6 +1244,107 @@ def test_fix_hints_name_real_failure_patterns():
     assert fix_hint("AssertionError: 10 != 100") == ""
 
 
+def test_key_values_are_validated_before_touching_env():
+    from contextos.keys import KeySetupError, clean, mask, warn
+    assert clean("GROQ_API_KEY", "  gsk_abcdefghijklmnop \n") == "gsk_abcdefghijklmnop"
+    assert clean("GROQ_API_KEY", '"gsk_quoted_value_1234"') == "gsk_quoted_value_1234"
+    assert clean("CLOUDFLARE_ACCOUNT_ID",
+                 "https://dash.cloudflare.com/e2d780ffed1fc2521622b5725862759a/home") == \
+        "e2d780ffed1fc2521622b5725862759a"
+    for name, bad in [("GROQ_API_KEY", "gsk_abc\nLLM_ROUTING=smart"),      # line injection
+                      ("GROQ_API_KEY", "two words"),
+                      ("PATH", "C:/evil"),                                   # not a key setting
+                      ("LLM_SMART_ORDER", "groq"),
+                      ("CLOUDFLARE_ACCOUNT_ID", "not-an-id")]:
+        with raises(KeySetupError):
+            clean(name, bad)
+    assert mask("gsk_abcdefghijklmnopWXYZ") == "…WXYZ" and mask("") == ""
+    assert warn("GROQ_API_KEY", "sk-or-v1-xyz") and not warn("GROQ_API_KEY", "gsk_x")
+
+
+def test_write_env_keeps_other_lines_and_is_atomic():
+    from contextos.keys import write_env
+    d = tempfile.mkdtemp()
+    env = os.path.join(d, ".env")
+    with open(env, "w", encoding="utf-8") as f:
+        f.write("# my notes\nGROQ_API_KEY=old\nLLM_ROUTING=smart\nMISTRAL_API_KEY=\n")
+    write_env(env, {"GROQ_API_KEY": "gsk_new", "MISTRAL_API_KEY": "mkey",
+                    "COHERE_API_KEY": "ckey"})
+    text = open(env, encoding="utf-8").read()
+    assert text == ("# my notes\nGROQ_API_KEY=gsk_new\nLLM_ROUTING=smart\n"
+                    "MISTRAL_API_KEY=mkey\nCOHERE_API_KEY=ckey\n")
+    write_env(env, {"GROQ_API_KEY": ""})                         # remove a key
+    assert "GROQ_API_KEY=\n" in open(env, encoding="utf-8").read()
+    assert [f for f in os.listdir(d) if f != ".env"] == []       # no temp files left
+    # No .env yet: start from .env.example so its comments and links come along.
+    d2 = tempfile.mkdtemp()
+    with open(os.path.join(d2, ".env.example"), "w", encoding="utf-8") as f:
+        f.write("# Groq: https://console.groq.com/keys\nGROQ_API_KEY=\n")
+    write_env(os.path.join(d2, ".env"), {"GROQ_API_KEY": "gsk_x"})
+    assert open(os.path.join(d2, ".env"), encoding="utf-8").read() == \
+        "# Groq: https://console.groq.com/keys\nGROQ_API_KEY=gsk_x\n"
+
+
+def test_key_status_never_includes_values_and_errors_are_scrubbed():
+    import json as _j
+    import contextos.keys as K
+    from contextos.live import ProviderError
+    env = {"GROQ_API_KEY": "gsk_supersecretvalue1234", "CLOUDFLARE_ACCOUNT_ID": "a" * 32}
+    blob = _j.dumps(K.status(env), ensure_ascii=False)
+    assert "supersecret" not in blob and "…1234" in blob and "a" * 32 not in blob
+    real = K.complete
+
+    def leaky(route, system, user, env, **kw):
+        raise ProviderError(f"HTTP 401: invalid key {env['GROQ_API_KEY']}")
+    K.complete = leaky
+    try:
+        rows = K.test_provider("groq", {"GROQ_API_KEY": "gsk_pasted_secret_9999"}, {})
+    finally:
+        K.complete = real
+    assert rows[0]["status"] == "REJECTED"
+    assert all("pasted_secret" not in r["detail"] for r in rows)
+    assert K.test_provider("mistral", {}, {})[0]["status"] == "no key"
+
+
+def test_http_key_setup_saves_reloads_and_goes_live():
+    import json as _j
+    import urllib.error
+    from contextos.server import Handler
+    httpd, base = _http_server()
+    eng = Handler.engine
+    d = tempfile.mkdtemp()
+    eng.env_path = os.path.join(d, ".env")
+    eng.auto_offline = True                    # started offline only because no keys
+    eng.env = {}
+    try:
+        st = _j.load(_req(base + "/api/keys"))
+        assert st["offline"] and not any(p["set"] for p in st["providers"])
+        assert _j.load(_req(base + "/api/state"))["needs_setup"]
+        for bad in ({"GROQ_API_KEY": "gsk_x\nLLM_ROUTING=fast"}, {"PATH": "x"}):
+            try:
+                _req(base + "/api/keys/save", {"values": bad})
+                raise AssertionError(f"accepted {bad}")
+            except urllib.error.HTTPError as e:
+                assert e.code == 400
+        r = _req(base + "/api/keys/save",
+                 {"values": {"GROQ_API_KEY": "gsk_fake_key_for_tests_ABCD"}}).read().decode()
+        assert "fake_key_for_tests" not in r                    # never echoed
+        out = _j.loads(r)
+        groq = next(p for p in out["providers"] if p["id"] == "groq")
+        assert groq["set"] and groq["masked"] == "…ABCD"
+        assert not out["offline"]                               # switched to real models
+        assert "groq" in eng.smart and "groq-fast" in eng.fast
+        assert eng.data.name != "offline"
+        assert open(eng.env_path, encoding="utf-8").read().count("GROQ_API_KEY=gsk_fake") == 1
+        # An explicit --offline start stays offline even after keys are added.
+        eng.offline, eng.auto_offline = True, False
+        _req(base + "/api/keys/save", {"values": {"COHERE_API_KEY": "cohere_fake_1234"}})
+        assert eng.offline
+    finally:
+        httpd.shutdown()
+        eng.close()
+
+
 def test_route_pin_goes_first():
     e = _offline_engine()
     r = e.chat("hi", route="offline-c")

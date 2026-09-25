@@ -308,6 +308,27 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
 .srow .d{flex:1;min-width:0}
 .srow small{color:var(--dim);display:block;word-break:break-word}
 
+/* ------------------------------------------------------------- API keys */
+.kcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.kcard.set{border-left:3px solid var(--good)}
+.kcard .kh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.kcard .kh b{font-size:14.5px}
+.kcard .st{margin-left:auto;font-size:12px;color:var(--dim)}
+.kcard .st.ok{color:var(--good)}
+.kcard .free{font-size:12.5px;color:var(--dim);margin:3px 0 6px}
+.kcard ol{margin:4px 0 8px;padding-left:20px;font-size:12.5px;color:var(--dim)}
+.kcard .kin{display:flex;gap:6px;margin-top:6px}
+.kcard .kin input{flex:1;min-width:0;font:inherit;font-family:var(--mono);font-size:12.5px;padding:7px 10px;
+  border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
+.kcard .kin .iconbtn{border:1px solid var(--line)}
+.kcard .kb{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.kcard .kb a{font-size:13px;color:var(--accent);text-decoration:none;margin-right:auto}
+.kres{margin-top:8px;font-size:12.5px}
+.kres div{padding:2px 0}
+.setup-banner{max-width:560px;margin:0 auto 22px;border:1px solid var(--warn-line);background:var(--warn-bg);
+  color:var(--text);border-radius:12px;padding:12px 14px;text-align:left;font-size:13.5px}
+.setup-banner .btn{margin-top:8px}
+
 /* --------------------------------------------------------------- mobile */
 #scrim{display:none}
 @media (max-width:900px){
@@ -345,6 +366,8 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
   <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V6a3 3 0 0 0-3-3Z"/><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
   <symbol id="i-hammer" viewBox="0 0 24 24"><path d="m15 12-8.5 8.5a2.1 2.1 0 0 1-3-3L12 9"/><path d="M17.6 15 22 10.6 13.4 2l-4.4 4.4z"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14 9l2 2"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4"/></symbol>
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
   <symbol id="i-share" viewBox="0 0 24 24"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="M16 6l-4-4-4 4M12 2v13"/></symbol>
@@ -370,6 +393,8 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
     <div class="sidefoot">
       <button id="provBtn" title="Models and providers"><span class="dot" id="provDot"></span>
         <span id="provLabel">Models</span></button>
+      <button id="keysBtn" title="Set up models: add your free API keys" aria-label="Set up API keys">
+        <svg class="icon"><use href="#i-key"/></svg></button>
       <button id="connBtn" title="Connectors (MCP) and skills" aria-label="Connectors and skills">
         <svg class="icon"><use href="#i-plug"/></svg></button>
       <button id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
@@ -732,7 +757,10 @@ const SUGGEST = [
 function renderThread(){
   const t = $('#thread');
   if(!S.messages.length){
-    t.innerHTML = `<div class="welcome"><h1>What are we working on?</h1>
+    const setup = S.state && S.state.needs_setup ? `<div class="setup-banner"><b>No models set up yet.</b>
+      Replies are simulated until you add a free API key. It takes about a minute, no credit card.
+      <div><button class="btn primary" data-open-keys>Set up free models</button></div></div>` : '';
+    t.innerHTML = `<div class="welcome">${setup}<h1>What are we working on?</h1>
       <p>Each chat keeps its own memory. Hard questions go to the strongest free models, easy ones to
       the fastest — and if a model fails mid-answer, another one picks up where it left off.</p>
       <div class="chips">${SUGGEST.map(([a, b]) =>
@@ -781,6 +809,7 @@ function detailsHtml(meta){
 }
 
 $('#thread').addEventListener('click', e => {
+  if(e.target.closest('[data-open-keys]')){ showKeys(); return; }
   const sug = e.target.closest('[data-suggest]');
   if(sug){ $('#input').value = sug.dataset.suggest; autosize(); send(); return; }
   const cc = e.target.closest('[data-copy-code]');
@@ -1064,8 +1093,10 @@ async function showProviders(){
   openDialog('Models', `<p class="dim">Tried top to bottom within each lane. A model that fails is rested for a
     while so later messages skip it. <b>Click a model to simulate it failing</b>, then send a message to watch
     another model take over with the chat's memory.</p>${rows}
-    <div style="margin-top:10px"><button class="btn primary" id="checkBtn">Test every model now</button></div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="checkBtn">Test every model now</button>
+      <button class="btn" id="toKeys">Set up API keys</button></div>
     <div id="checkOut"></div>`);
+  $('#toKeys').onclick = showKeys;
   $('#checkBtn').onclick = async () => {
     const b = $('#checkBtn'); b.disabled = true; b.textContent = 'Testing… this can take a minute or two';
     const r = await api('/api/check', {});
@@ -1425,6 +1456,80 @@ async function showConnectors(){
     <p class="dim">Add your own: a folder in <code>skills/</code> containing a <code>SKILL.md</code> with <code>name</code> and
       <code>description</code> front matter (the open Agent Skills format).</p>`);
   $('#connReload').onclick = async () => { await api('/api/connectors/reload', {}); showConnectors(); toast('Reloaded'); };
+}
+
+// --------------------------------------------------------------- API keys
+// Keys go from here to the local server only. The server never sends a saved
+// key back; the page sees "Saved ...ABCD" at most.
+$('#keysBtn').onclick = showKeys;
+async function showKeys(){
+  const k = await api('/api/keys');
+  openDialog('Set up models', `<p class="dim">Every provider here is <b>free with no credit card</b>. Add at least one;
+      two or three let ContextOS switch when one is busy. Keys are saved to <code>.env</code> on this computer and
+      never shown again.</p>
+    ${k.providers.map(keyCard).join('')}
+    <p class="dim" style="margin-top:6px">Saved to <code>${esc(k.env_file)}</code></p>`);
+  $('#dlgBody').querySelectorAll('.kcard').forEach(wireKeyCard);
+}
+function keyCard(p){
+  const extra = p.extra ? `<div class="kin"><input type="text" data-env="${esc(p.extra.env)}" autocomplete="off"
+      spellcheck="false" aria-label="${esc(p.label)} ${esc(p.extra.label)}"
+      placeholder="${esc(p.extra.label)}${p.extra.set ? ' (saved ' + esc(p.extra.masked) + ')' : ': ' + esc(p.extra.placeholder)}"></div>` : '';
+  return `<div class="kcard${p.set ? ' set' : ''}" data-pid="${esc(p.id)}">
+    <div class="kh"><b>${esc(p.label)}</b>${p.recommended ? '<span class="tag pass">recommended</span>' : ''}
+      <span class="st${p.set ? ' ok' : ''}">${p.set ? 'Saved ' + esc(p.masked) : 'Not set'}</span></div>
+    <div class="free">${esc(p.free)}</div>
+    <ol>${p.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+    <div class="kin"><input type="password" data-env="${esc(p.env)}" data-secret autocomplete="off" spellcheck="false"
+        aria-label="${esc(p.label)} API key" placeholder="${p.set ? 'Paste a new key to replace it' : 'Paste your key here'}">
+      <button class="iconbtn" data-peek title="Show or hide" aria-label="Show or hide the key">${icon('eye')}</button></div>
+    ${extra}
+    <div class="kb"><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${p.local ? 'Download' : 'Get a key'} ↗</a>
+      <button class="btn" data-test>Test</button><button class="btn primary" data-save>Save</button>
+      ${p.set ? '<button class="btn" data-remove>Remove</button>' : ''}</div>
+    <div class="kres" aria-live="polite"></div></div>`;
+}
+function wireKeyCard(card){
+  const pid = card.dataset.pid, res = card.querySelector('.kres');
+  const values = () => Object.fromEntries([...card.querySelectorAll('input[data-env]')]
+    .filter(i => i.value.trim()).map(i => [i.dataset.env, i.value.trim()]));
+  card.querySelector('[data-peek]').onclick = () => {
+    const i = card.querySelector('input[data-secret]');
+    i.type = i.type === 'password' ? 'text' : 'password';
+  };
+  card.querySelector('[data-test]').onclick = async e => {
+    const b = e.target.closest('button'); b.disabled = true; b.textContent = 'Testing…';
+    res.innerHTML = '<div style="color:var(--dim)">Making one small real call per model…</div>';
+    const r = await api('/api/keys/test', {provider:pid, values:values()});
+    b.disabled = false; b.textContent = 'Test';
+    if(r.error){ res.innerHTML = `<div class="ev err">${esc(r.error)}</div>`; return; }
+    res.innerHTML = r.rows.map(x => `<div><span class="tag ${x.status === 'OK' ? 'pass' : 'fail'}">${esc(x.status)}</span>
+      <code>${esc(x.model)}</code> ${x.status === 'OK' ? '' : '- ' + esc(x.detail)}</div>`).join('');
+  };
+  const save = async (vals, removing) => {
+    if(!Object.keys(vals).length){ res.innerHTML = '<div class="ev err">Paste a key first.</div>'; return; }
+    const wasOffline = S.state && S.state.offline;
+    const r = await api('/api/keys/save', {values:vals});
+    if(r.error){ res.innerHTML = `<div class="ev err">${esc(r.error)}</div>`; return; }
+    await refreshState();
+    if(wasOffline && !r.offline){                 // first key: now on real models
+      await loadConvs(); newChat();
+      toast('Switched to real models');
+    } else toast(removing ? 'Key removed' : 'Saved. Models reloaded');
+    if(!inBuild() && !S.messages.length) renderThread();
+    await showKeys();
+    if(r.warnings && r.warnings.length){
+      const c = $('#dlgBody').querySelector(`.kcard[data-pid="${pid}"] .kres`);
+      if(c) c.innerHTML = r.warnings.map(w => `<div class="ev" style="color:var(--warn)">${esc(w)}</div>`).join('');
+    }
+  };
+  card.querySelector('[data-save]').onclick = () => save(values(), false);
+  const rm = card.querySelector('[data-remove]');
+  if(rm) rm.onclick = () => {
+    if(!confirm('Remove this key from .env?')) return;
+    const clear = {}; card.querySelectorAll('input[data-env]').forEach(i => clear[i.dataset.env] = '');
+    save(clear, true);
+  };
 }
 
 // ------------------------------------------------------------------- boot

@@ -8,6 +8,18 @@
 
 ## The `.env` file
 
+**The quickest way to add keys is the app itself:** the key icon (bottom left) opens
+*Set up models*. For each provider it shows signup steps, a link, a paste box, and
+**Test** (one small real call per model) and **Save** buttons. Saving:
+
+- writes only known key names, and rejects values with spaces or line breaks, so nothing
+  else can be slipped into `.env`;
+- keeps every other line and comment, and writes a temporary file then swaps it in, so
+  `.env` is never left half-written. On macOS/Linux it's also made readable only by you;
+- reloads the models with no restart. If ContextOS started in offline mode only because
+  there were no keys, it switches to real models;
+- never sends a saved key back to the page, only its last four characters.
+
 All settings live in `.env` in the ContextOS folder. The installer creates it from
 [`.env.example`](../.env.example), which lists every provider with a signup link. Put
 one setting per line, with no quotes needed:

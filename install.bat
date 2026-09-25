@@ -170,7 +170,7 @@ echo   ContextOS is installed.
 echo.
 echo   Folder:     %DIR%
 echo   Start it:   double-click RUN.bat - or the desktop shortcut
-echo   API keys:   edit .env - every provider listed there is free
+echo   API keys:   in the app, click the key icon at the bottom left
 echo   Test keys:  RUN.bat, then press T
 echo ===============================================================
 
@@ -179,8 +179,8 @@ if "%YES%"=="1" goto end
 findstr /r /b "[A-Z_]*_API_KEY=." ".env" >nul 2>&1
 if errorlevel 1 (
   echo.
-  call :ask "No API keys yet. Open .env in Notepad to add one?" Y
-  if /i "!ANSWER!"=="Y" start "" notepad ".env"
+  echo   No API keys yet. When the app opens, click "Set up free models" -
+  echo   it links to each free provider and saves your keys for you.
 )
 echo.
 call :ask "Start ContextOS now?" Y

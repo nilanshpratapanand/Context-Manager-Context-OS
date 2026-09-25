@@ -169,7 +169,7 @@ ${G}${B}ContextOS is installed.${N}
   Folder:      $DIR
   Start it:    ${B}$DIR/run.sh${N}                (opens http://127.0.0.1:8000)
   No keys yet: ${B}$DIR/run.sh --offline${N}      (simulated replies)
-  API keys:    edit ${B}$DIR/.env${N}  - every provider listed there is free, no card
+  API keys:    in the app, click the key icon (bottom left) - or edit ${B}$DIR/.env${N}
   Check keys:  ${B}$DIR/run.sh check${N}
 
 EOF

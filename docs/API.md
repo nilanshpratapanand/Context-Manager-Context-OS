@@ -68,6 +68,14 @@ is written from it.
 | `POST` | `/api/check` | One real call per configured model: `{rows: [{provider, status, model, detail}]}` |
 | `POST` | `/api/fail` | `{provider}` toggles a simulated failure, for demonstrating handoffs |
 
+### API keys
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/api/keys` | — | Each provider: signup link, steps, free tier, `set`, `masked` (last 4 characters only) |
+| `POST` | `/api/keys/test` | `{provider, values: {ENV_NAME: key}}` | One real call per model: `OK`, `LIMITED`, `BUSY`, `REJECTED` or `FAIL`. Nothing is saved |
+| `POST` | `/api/keys/save` | `{values: {ENV_NAME: key or ""}}` | Writes `.env` (an empty value removes the key) and reloads the models |
+
 ### Build mode, connectors, skills
 
 `/api/builds…`, `/api/connectors` and `/api/skills` are documented in
