@@ -664,6 +664,27 @@ def test_reasoning_streams_as_thinking_events():
     assert done["content"] == "The answer is **849.6**." and done["meta"]["thought_ms"] > 0
 
 
+def test_block_only_reply_is_continued_on_same_model():
+    from contextos.server import CONTINUE
+    e = _offline_engine()
+    asks = []
+
+    def lazy(name, system, user):
+        asks.append(user)
+        if not user.endswith(CONTINUE):
+            yield "<context>\nfact | /task/inputs/price | shirt costs 800\n</context>"
+            return
+        yield "The final price is 849.6."
+    e._stream = lazy
+    evs = list(e.chat_stream(None, "Design a price table for 800 rupee shirts"))
+    done = evs[-1]["message"]
+    assert done["content"] == "The final price is 849.6."
+    first = next(x["provider"] for x in evs if x["type"] == "model")
+    assert done["meta"]["provider"] == first and done["meta"]["switched"] == []
+    assert "/task/inputs/price" in [w["address"] for w in done["meta"]["written"]]
+    assert len(asks) == 2
+
+
 def test_route_pin_goes_first():
     e = _offline_engine()
     r = e.chat("hi", route="offline-c")

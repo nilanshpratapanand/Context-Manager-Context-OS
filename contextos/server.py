@@ -72,6 +72,12 @@ Addresses are lowercase; the first segment must be user, project, task, agent, t
 or artifact. Reuse an existing address when updating the same item. Skip the block
 only for pure small talk (greetings, thanks)."""
 
+# Small models sometimes stop right after the <context> block, as if it were the
+# reply (1 in 3 on gpt-oss-20b). Asking the same model to go on is one fast call;
+# falling back to another model is a handoff and several seconds.
+CONTINUE = ("\n\n## Note\nYour context block for this turn is already saved. Reply to "
+            "the user now - write only the answer, with no <context> block.")
+
 CONTEXT_RE = re.compile(r"<context>(.*?)</context>", re.DOTALL | re.IGNORECASE)
 
 _RUN = re.compile(r"(\S)\1{29,}")
@@ -357,28 +363,35 @@ class Engine:
                 yield {"type": "model", "provider": name, "model": self._model(name),
                        "lane": "smart" if name in self.smart else "fast"}
                 raw, shown, thinking, t_think = "", "", 0, None
+                block_only = ""
                 try:
-                    for chunk in self._stream(name, SYSTEM, user_msg):
-                        if isinstance(chunk, tuple):
-                            thinking += len(chunk[1])
-                            t_think = t_think or time.time()
-                            yield {"type": "thinking", "text": chunk[1]}
-                            continue
-                        raw += chunk
-                        vis = visible_text(raw)
-                        if len(vis) >= 30 and is_degenerate(vis):
-                            raise ProviderError("garbled reply (repeated characters)")
-                        # Update `shown` before yielding: a Stop lands at the yield,
-                        # and the partial reply saved must include this piece.
-                        prev, shown = shown, vis
-                        if vis.startswith(prev):
-                            if len(vis) > len(prev):
-                                yield {"type": "delta", "text": vis[len(prev):]}
-                        else:
-                            yield {"type": "replace", "text": vis}
+                    for attempt in (0, 1):
+                        ask = user_msg + (CONTINUE if attempt else "")
+                        for chunk in self._stream(name, SYSTEM, ask):
+                            if isinstance(chunk, tuple):
+                                thinking += len(chunk[1])
+                                t_think = t_think or time.time()
+                                yield {"type": "thinking", "text": chunk[1]}
+                                continue
+                            raw += chunk
+                            vis = visible_text(raw)
+                            if len(vis) >= 30 and is_degenerate(vis):
+                                raise ProviderError("garbled reply (repeated characters)")
+                            # Update `shown` before yielding: a Stop lands at the
+                            # yield, and the partial reply saved must include this piece.
+                            prev, shown = shown, vis
+                            if vis.startswith(prev):
+                                if len(vis) > len(prev):
+                                    yield {"type": "delta", "text": vis[len(prev):]}
+                            else:
+                                yield {"type": "replace", "text": vis}
+                        if shown.strip() or attempt or not CONTEXT_RE.search(raw):
+                            break
+                        block_only, raw = raw, ""       # keep the block, ask again
                     if not shown.strip():
                         raise ProviderError("empty reply (the model may have spent its "
                                             "whole output budget on reasoning)")
+                    raw = block_only + raw
                     used = name
                     break
                 except ProviderError as exc:
