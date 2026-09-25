@@ -9,7 +9,7 @@ A local chat app, context engine and build agent that runs on free AI models. It
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen)](requirements.txt)
 [![Release](https://img.shields.io/github/v/release/nilanshpratapanand/Context-Manager-Context-OS)](https://github.com/nilanshpratapanand/Context-Manager-Context-OS/releases/latest)
-[![Tests: 102 passing](https://img.shields.io/badge/tests-102%20passing-brightgreen)](tests/test_contextos.py)
+[![Tests: 103 passing](https://img.shields.io/badge/tests-103%20passing-brightgreen)](tests/test_contextos.py)
 [![Free models](https://img.shields.io/badge/models-free%20tier%20only-8A2BE2)](docs/CONFIGURATION.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/nilanshpratapanand/Context-Manager-
 | 2. Download | `git clone` if Git is installed, otherwise the GitHub zip | `git clone`, otherwise the tarball via curl or wget |
 | 3. Environment | Private `.venv` + `pip install -r requirements.txt` | Same |
 | 4. Settings | Creates `.env` from `.env.example` | Same |
-| 5. Self-test | Runs the 102 tests | Same |
+| 5. Self-test | Runs the 103 tests | Same |
 | 6. Finish | Desktop shortcut, opens `.env` in Notepad, starts the app | Offers to start the app |
 
 It installs to `%USERPROFILE%\ContextOS` or `~/ContextOS`. **Run it again to update**: your `.env` keys and your chats are never touched.
@@ -230,7 +230,7 @@ ContextOS/
 │   ├── budget.py / handoff.py  token-budget packing, handoff packets
 │   ├── mcp_server.py / cli.py  MCP server and command line
 │   └── bench.py / demo.py      benchmark and demo
-├── tests/                      102 tests, standard library only
+├── tests/                      103 tests, standard library only
 └── docs/                       configuration, API, research
 ```
 

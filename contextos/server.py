@@ -693,13 +693,36 @@ class Engine:
         try:
             recs = json.loads(self._index().read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return
+            recs = []                  # no index yet: older builds are adopted below
         for rec in recs if isinstance(recs, list) else []:
             try:
                 if pathlib.Path(rec["workspace"]).is_dir():
                     self.builds[rec["id"]] = ArchivedBuild(rec)
             except (KeyError, TypeError, OSError):
                 continue
+        self._adopt_unindexed()
+
+    def _adopt_unindexed(self) -> None:
+        """Builds made before the index existed: rebuild a record from their report."""
+        import hashlib
+        from .builder import ArchivedBuild
+        known = {str(pathlib.Path(b.ws.root).resolve()) for b in self.builds.values()}
+        for rep in sorted((self.data / "builds").glob("*/BUILD_REPORT.md")):
+            ws = rep.parent.resolve()
+            if str(ws) in known:
+                continue
+            text = rep.read_text(encoding="utf-8", errors="replace")
+            goal = re.search(r"^\*\*Goal:\*\*\s*(.+)$", text, re.M)
+            block = lambda h: (re.search(rf"^## {h}\s*\n+```\n?(.*?)\n?```", text, re.M | re.S)
+                               or [None, ""])[1].strip()
+            bid = hashlib.sha1(str(ws).encode()).hexdigest()[:10]
+            self.builds[bid] = ArchivedBuild({
+                "id": bid, "goal": goal.group(1).strip() if goal else ws.name,
+                "workspace": str(ws), "status": "done", "started": rep.stat().st_mtime,
+                "plan": {"test_all": block("How to test"), "run_command": block("How to run"),
+                         "features": []},
+                "results": [{"name": m.group(2), "passed": m.group(1) == "PASS", "rounds": 1}
+                            for m in re.finditer(r"^- (PASS|FAIL) \*\*(.+?)\*\*", text, re.M)]})
 
     def _save_builds(self) -> None:
         recs = [b.record() for b in self.builds.values()][-200:]

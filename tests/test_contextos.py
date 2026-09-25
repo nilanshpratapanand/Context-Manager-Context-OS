@@ -1477,6 +1477,34 @@ def test_change_on_archived_build_resumes_it():
         eng.close()
 
 
+def test_builds_from_before_the_index_are_adopted():
+    from contextos.server import Engine
+    d = tempfile.mkdtemp()
+    ws = os.path.join(d, "builds", "old-site")
+    os.makedirs(ws)
+    with open(os.path.join(ws, "BUILD_REPORT.md"), "w", encoding="utf-8") as f:
+        f.write("# Build report\n\n**Goal:** make a portfolio site\n\n## How to run\n\n```\n"
+                "python serve.py\n```\n\n## How to test\n\n```\npython -m unittest discover -s "
+                "tests -v\n```\n\n## Features\n\n- PASS **site**: x\n- FAIL **blog**: y\n")
+    with open(os.path.join(ws, "index.html"), "w") as f:
+        f.write("<h1>hi</h1>")
+    e = Engine(d, {}, offline=True)
+    try:
+        b = next(iter(e.builds.values()))
+        assert b.goal == "make a portfolio site" and b.archived
+        assert b.plan["test_all"] == "python -m unittest discover -s tests -v"
+        assert [(r["name"], r["passed"]) for r in b.results] == [("site", True), ("blog", False)]
+        assert b.summary()["site"] == "index.html"
+        bid = b.id
+    finally:
+        e.close()
+    e2 = Engine(d, {}, offline=True)                    # same id next time, no duplicate
+    try:
+        assert list(e2.builds) == [bid]
+    finally:
+        e2.close()
+
+
 def test_route_pin_goes_first():
     e = _offline_engine()
     r = e.chat("hi", route="offline-c")
