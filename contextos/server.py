@@ -35,6 +35,7 @@ from . import router
 from .budget import render
 from .handoff import classify, should_migrate
 from .chats import ChatStore, title_from
+from .tools import ToolError
 from .live import (FAST_ORDER, MODEL_ENV_OVERRIDE, PROVIDERS, SMART_ORDER,
                    ProviderError, load_env, stream_events, strip_reasoning)
 from .units import KINDS, count_tokens
@@ -141,6 +142,8 @@ class Engine:
         self.smart, self.fast = self._lanes()
         self.current = self.order[0] if self.order else None
         self._default: Optional[str] = None
+        self.builds: dict[str, Any] = {}
+        self.connectors: Any = None
 
     # ------------------------------------------------------------- providers
     def _lanes(self) -> tuple[list[str], list[str]]:
@@ -514,6 +517,7 @@ class Engine:
             return
 
         self.current = used
+        self.cooldown.ok(used)
         written = self._commit(raw, used, ctx)
         if not written and decision.score > 0.05:
             # The model saved nothing. Keep the user's own words so a later
@@ -586,13 +590,58 @@ class Engine:
                 "full_replay": p.tokens_stored, "reduction": p.reduction,
                 "omitted": p.omitted[:40], "notes": p.notes}
 
+    # ------------------------------------------------------------ build mode
+    def _connectors(self) -> Any:
+        if getattr(self, "connectors", None) is None:
+            from .mcp_client import Connectors
+            self.connectors = Connectors("mcp.json")
+            self.connectors.start()
+        return self.connectors
+
+    def start_build(self, body: dict[str, Any]) -> dict[str, Any]:
+        from .builder import BuildRun
+        if self.offline:
+            raise ToolError("builds need real models - start ContextOS without --offline "
+                            "(and add at least one API key)")
+        goal = str(body.get("goal", "")).strip()
+        if len(goal) < 10:
+            raise ToolError("describe what to build in a sentence or two")
+        slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")[:32] or "project"
+        ws = str(body.get("workspace") or "").strip() or \
+            str(self.data / "builds" / f"{slug}-{int(time.time()) % 100000}")
+        run = BuildRun(goal, ws, self.env, connectors=self._connectors(),
+                       auto_approve_tests=bool(body.get("auto_approve_tests", True)),
+                       research=bool(body.get("research", True)),
+                       review_plan=bool(body.get("review_plan", True)),
+                       max_features=int(body.get("max_features") or 6),
+                       app_root=str(HERE.parent))
+        self.builds[run.id] = run
+        run.start()
+        return run.summary()
+
+    def build(self, bid: str) -> Any:
+        run = self.builds.get(bid)
+        if not run:
+            raise ToolError("no such build")
+        return run
+
+    def skills_list(self) -> list[dict[str, str]]:
+        from .skills import discover
+        return [{"name": s.name, "description": s.description, "path": str(s.path)}
+                for s in discover("skills").values()]
+
     def close(self) -> None:
+        for run in getattr(self, "builds", {}).values():
+            run.stop.set()
+        if getattr(self, "connectors", None):
+            self.connectors.close()
         for c in self._ctxs.values():
             c.close()
         self.chats.close()
 
 
 _CONV = re.compile(r"^/api/conversations/([0-9a-f]{12})(?:/([a-z]+))?$")
+_BUILD = re.compile(r"^/api/builds/([0-9a-f]{10})(?:/([a-z]+))?$")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -659,6 +708,28 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/conversations":
                 q = urllib.parse.parse_qs(query).get("q", [""])[0]
                 self._json({"conversations": eng.chats.list(q)})
+            elif path == "/api/builds":
+                self._json({"builds": [r.summary() for r in eng.builds.values()]})
+            elif path == "/api/connectors":
+                self._json({"servers": eng._connectors().status(),
+                            "builtin": ["web_search (DuckDuckGo)", "fetch_url", "wikipedia",
+                                        "arxiv_search", "arxiv_read"]})
+            elif path == "/api/skills":
+                self._json({"skills": eng.skills_list()})
+            elif m := _BUILD.match(path):
+                bid, action = m.groups()
+                run = eng.build(bid)
+                args = urllib.parse.parse_qs(query)
+                if action is None:
+                    self._json({**run.summary(), "plan": run.plan, "results": run.results})
+                elif action == "events":
+                    self._stream_build(run, int(args.get("after", ["0"])[0] or 0))
+                elif action == "files":
+                    self._json({"files": run.ws.list_files(".", "4")})
+                elif action == "file":
+                    self._json({"text": run.ws.read_file(args.get("path", [""])[0], "1", "400")})
+                else:
+                    self._json({"error": "not found"}, 404)
             elif m := _CONV.match(path):
                 cid, action = m.groups()
                 if not eng.chats.get(cid):
@@ -686,6 +757,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": "not found"}, 404)
             else:
                 self._send(404, b"not found", "text/plain")
+        except ToolError as exc:                  # the caller's mistake, said plainly
+            self._json({"error": str(exc)}, 400)
         except Exception as exc:
             traceback.print_exc()
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
@@ -700,6 +773,23 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if self.path == "/api/chat":
                 self._stream_chat(body)
+            elif self.path == "/api/builds":
+                self._json(eng.start_build(body))
+            elif self.path == "/api/connectors/reload":
+                if eng.connectors:
+                    eng.connectors.close()
+                    eng.connectors = None
+                self._json({"servers": eng._connectors().status()})
+            elif m := _BUILD.match(self.path):
+                bid, action = m.groups()
+                run = eng.build(bid)
+                if action == "answer":
+                    self._json({"ok": run.answer(str(body.get("id", "")), body)})
+                elif action == "stop":
+                    run.stop.set()
+                    self._json({"ok": True})
+                else:
+                    self._json({"error": "not found"}, 404)
             elif self.path == "/api/conversations":
                 self._json(eng.chats.create())
             elif m := _CONV.match(self.path):
@@ -725,9 +815,33 @@ class Handler(BaseHTTPRequestHandler):
                             "rows": [] if eng.offline else live_check(eng.env)})
             else:
                 self._json({"error": "not found"}, 404)
+        except ToolError as exc:                  # the caller's mistake, said plainly
+            self._json({"error": str(exc)}, 400)
         except Exception as exc:
             traceback.print_exc()
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
+    def _stream_build(self, run: Any, after: int) -> None:
+        """Tail a build's events as NDJSON. Closing the connection doesn't stop the
+        build; the page reconnects with ?after=<last seq + 1>."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        n = after
+        try:
+            while True:
+                evs = run.events_after(n, 15)
+                for ev in evs:
+                    self.wfile.write((json.dumps(ev) + "\n").encode())
+                n += len(evs)
+                if not evs:                        # keep-alive so proxies don't cut us off
+                    self.wfile.write(b'{"type":"ping"}\n')
+                self.wfile.flush()
+                if run.status in ("done", "failed", "stopped") and n >= len(run.events):
+                    return
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
 
     def _stream_chat(self, body: dict[str, Any]) -> None:
         """One JSON event per line. The connection closes when the turn ends

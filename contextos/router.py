@@ -135,15 +135,42 @@ def cooldown_for(error: str) -> int:
     return 15
 
 
+_HINT = re.compile(r"(?:try again|retry) in\s+(?:(\d+)m)?\s*(\d+(?:\.\d+)?)\s*s", re.I)
+_DAILY = re.compile(r"per day|daily|RPD|requests per day|free-models-per-day", re.I)
+
+
+def retry_hint(error: str) -> Optional[int]:
+    """Providers often say exactly when to come back ("try again in 7.5s")."""
+    m = _HINT.search(error or "")
+    if not m:
+        return None
+    return int((int(m.group(1) or 0) * 60) + float(m.group(2))) + 1
+
+
 class Cooldown:
+    """How long to rest each route. Repeat failures rest progressively longer, so a
+    provider that is out of quota stops being retried on every request."""
+
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._until: dict[str, float] = {}
+        self._strikes: dict[str, int] = {}
         self._clock = clock
 
     def hit(self, name: str, error: str) -> int:
-        secs = cooldown_for(error)
+        strikes = self._strikes[name] = self._strikes.get(name, 0) + 1
+        base = cooldown_for(error)
+        hint = retry_hint(error)
+        if ("429" in error or "quota" in error.lower()) and _DAILY.search(error):
+            secs = 3600                             # daily allowance used up
+        elif hint:
+            secs = min(hint, 3600)
+        else:
+            secs = min(base * 2 ** (strikes - 1), max(base, 1800))
         self._until[name] = self._clock() + secs
         return secs
+
+    def ok(self, name: str) -> None:
+        self._strikes.pop(name, None)
 
     def remaining(self, name: str) -> int:
         return max(0, int(self._until.get(name, 0) - self._clock()))
@@ -154,6 +181,8 @@ class Cooldown:
     def clear(self, names: Optional[Iterable[str]] = None) -> None:
         if names is None:
             self._until.clear()
+            self._strikes.clear()
         else:
             for n in names:
                 self._until.pop(n, None)
+                self._strikes.pop(n, None)

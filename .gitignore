@@ -7,3 +7,6 @@
 __pycache__/
 *.pyc
 chat_data/
+mcp.json
+build/
+*.egg-info/

@@ -68,6 +68,11 @@ is written from it.
 | `POST` | `/api/check` | One real call per configured model: `{rows: [{provider, status, model, detail}]}` |
 | `POST` | `/api/fail` | `{provider}` toggles a simulated failure, for demonstrating handoffs |
 
+### Build mode, connectors, skills
+
+`/api/builds…`, `/api/connectors` and `/api/skills` are documented in
+[AGENT.md → HTTP API](AGENT.md#http-api).
+
 ### Example
 
 ```bash

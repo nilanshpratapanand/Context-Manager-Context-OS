@@ -4,16 +4,16 @@
 
 **Your AI conversation keeps its memory, even when the model changes.**
 
-A local chat app and context engine that runs on free AI models. It sends hard questions to the strongest free model and easy ones to the fastest, and when a model fails in the middle of an answer, another one continues from the same memory.
+A local chat app, context engine and build agent that runs on free AI models. It sends hard questions to the strongest free model and easy ones to the fastest. When a model fails mid-answer, another one continues from the same memory. And in **Build mode** it researches, plans, builds and tests a whole project, feature by feature.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen)](requirements.txt)
 [![Release](https://img.shields.io/github/v/release/nilanshpratapanand/Context-Manager-Context-OS)](https://github.com/nilanshpratapanand/Context-Manager-Context-OS/releases/latest)
-[![Tests: 68 passing](https://img.shields.io/badge/tests-68%20passing-brightgreen)](tests/test_contextos.py)
+[![Tests: 94 passing](https://img.shields.io/badge/tests-94%20passing-brightgreen)](tests/test_contextos.py)
 [![Free models](https://img.shields.io/badge/models-free%20tier%20only-8A2BE2)](docs/CONFIGURATION.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[Install](#install) · [Features](#features) · [How it works](#how-it-works) · [Free API keys](#get-free-api-keys) · [Docs](#documentation)
+[Install](#install) · [Features](#features) · [Build mode](#build-mode) · [How it works](#how-it-works) · [Free API keys](#get-free-api-keys) · [Docs](#documentation)
 
 </div>
 
@@ -38,6 +38,9 @@ ContextOS keeps the **memory of a conversation in your own app, not inside a mod
 | **Automatic handoff** | If a model fails, even halfway through a reply, the next one takes over with a compact, direction-aware summary of the memory. |
 | **Memory panel** | See exactly what the model remembers about a chat, and delete anything wrong. |
 | **Continue in another AI** | Export a chat's memory as one Markdown message and paste it into ChatGPT, Claude, Gemini or any other AI. |
+| **Build mode** | Give it a goal and it researches (web, docs, arXiv papers), plans features, then builds them one at a time, **running each feature's tests before moving on**. Then a security review and a report. See [Build mode](#build-mode). |
+| **Connectors (MCP)** | Connect any MCP server via `mcp.json` (the same format as Claude Desktop). Its tools become available to builds. |
+| **Skills** | Reusable instructions in the open `SKILL.md` format. Three are bundled; add your own. |
 | **7 free providers** | Groq, Google Gemini, OpenRouter, NVIDIA, Cloudflare, Mistral and Cohere, plus Ollama for offline use. None of them need a credit card. |
 | **Zero dependencies** | Pure Python standard library and SQLite, with no build step. The installer sets everything up. |
 
@@ -65,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/nilanshpratapanand/Context-Manager-
 | 2. Download | `git clone` if Git is installed, otherwise the GitHub zip | `git clone`, otherwise the tarball via curl or wget |
 | 3. Environment | Private `.venv` + `pip install -r requirements.txt` | Same |
 | 4. Settings | Creates `.env` from `.env.example` | Same |
-| 5. Self-test | Runs the 68 tests | Same |
+| 5. Self-test | Runs the 94 tests | Same |
 | 6. Finish | Desktop shortcut, opens `.env` in Notepad, starts the app | Offers to start the app |
 
 It installs to `%USERPROFILE%\ContextOS` or `~/ContextOS`. **Run it again to update**: your `.env` keys and your chats are never touched.
@@ -140,6 +143,29 @@ Which model each provider uses, and every setting you can change, is in **[docs/
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> | Search chats |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | New chat |
 
+## Build mode
+
+Click **New build**, describe what you want, and pick a folder. Or from a terminal:
+
+```bash
+python -m contextos.build "A CLI word counter with a --top N option" --workspace ./wordcount
+```
+
+| Phase | What happens | Models |
+|---|---|---|
+| Research | Web search, docs, Wikipedia and arXiv papers; findings saved with sources | Fast |
+| Plan | Features, each with its own test command | Smart |
+| **You** | Approve or edit the plan | — |
+| Build | Code + tests per feature. **ContextOS runs the tests itself**, and gives the agent the real error and up to 2 retries if they fail. Earlier tests rerun after every feature. | Smart |
+| Security | Vulnerability scan, then a model review and fixes, then tests again | Smart |
+| Report | `BUILD_REPORT.md`, written from real test results | — |
+
+**Safety:** the agent can only touch the project folder, and `.git`, `.env` and key
+files are off-limits. Commands ask you first, except the plan's own test commands when
+they are plainly a test runner. Commands run without your API keys, web pages can't reach
+your local network, and web content is never treated as instructions. Everything is in
+**[docs/AGENT.md](docs/AGENT.md)**, including connectors, skills and the API.
+
 ## How it works
 
 ```mermaid
@@ -186,12 +212,17 @@ ContextOS/
 │   ├── chats.py                saved conversations
 │   ├── router.py               smart / fast lanes, difficulty score, cooldowns
 │   ├── live.py                 providers, streaming, model checks
+│   ├── builder.py / build.py   build mode pipeline and its terminal command
+│   ├── agent.py                the step-by-step agent loop
+│   ├── tools.py                agent tools: files, commands, web, papers, security scan
+│   ├── mcp_client.py           MCP connectors
+│   ├── skills.py, skills/      Agent Skills (SKILL.md) and the bundled ones
 │   ├── store.py                SQLite + full-text search, versioning, conflicts
 │   ├── retrieval.py            four-ranker hybrid search
 │   ├── budget.py / handoff.py  token-budget packing, handoff packets
 │   ├── mcp_server.py / cli.py  MCP server and command line
 │   └── bench.py / demo.py      benchmark and demo
-├── tests/                      68 tests, standard library only
+├── tests/                      94 tests, standard library only
 └── docs/                       configuration, API, research
 ```
 
@@ -218,6 +249,7 @@ ContextOS/
 
 | | |
 |---|---|
+| [docs/AGENT.md](docs/AGENT.md) | Build mode: phases, tools, safety model, MCP connectors, skills, CLI |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Providers, models, `.env` settings, routing, server options, where data is stored |
 | [docs/API.md](docs/API.md) | HTTP API, streaming events, Python library, CLI, MCP server |
 | [docs/RESEARCH.md](docs/RESEARCH.md) | The research, design decisions, benchmark, live evaluation, limits |
@@ -234,6 +266,8 @@ ContextOS/
 - Retrieval is lexical: a question that shares no words with a saved fact may not find it.
 - Free tiers change often. Models get retired and limits move, so run `RUN.bat` → **T** when something stops working.
 - ContextOS carries declared state (facts, rules, decisions), not a model's unfinished reasoning.
+- Build mode on free tiers is slow: about 3–4k tokens a step against limits of a few
+  thousand tokens a minute, so a 4-feature build can take 10–30 minutes. More keys help.
 - `install.sh`'s package-manager and `venv` branches for macOS and Linux haven't been run on those systems yet. The shared steps are tested.
 
 ## License

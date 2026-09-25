@@ -20,3 +20,8 @@ contextos-mcp = "contextos.mcp_server:main"
 
 [tool.setuptools]
 packages = ["contextos"]
+
+# Non-Python files the package needs at runtime; without this `pip install .`
+# ships the server without its UI and the agent without its bundled skills.
+[tool.setuptools.package-data]
+contextos = ["dashboard.html", "skills/*/SKILL.md", "skills/*/*"]
