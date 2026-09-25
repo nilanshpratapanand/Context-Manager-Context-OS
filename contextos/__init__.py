@@ -27,7 +27,7 @@ from .retrieval import Hit, get_or_search, search
 from .store import ContextStore
 from .units import Unit, count_tokens, normalize_address, tokens_exact
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = [
     "ContextOS", "ContextStore", "Unit", "Hit", "Selection", "HandoffPacket",
     "search", "pack", "render", "classify", "should_migrate", "count_tokens",

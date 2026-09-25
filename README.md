@@ -8,6 +8,7 @@ A local chat app and context engine that runs on free AI models. It sends hard q
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen)](requirements.txt)
+[![Release](https://img.shields.io/github/v/release/nilanshpratapanand/Context-Manager-Context-OS)](https://github.com/nilanshpratapanand/Context-Manager-Context-OS/releases/latest)
 [![Tests: 68 passing](https://img.shields.io/badge/tests-68%20passing-brightgreen)](tests/test_contextos.py)
 [![Free models](https://img.shields.io/badge/models-free%20tier%20only-8A2BE2)](docs/CONFIGURATION.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -44,7 +45,7 @@ ContextOS keeps the **memory of a conversation in your own app, not inside a mod
 
 ### Windows 10 / 11
 
-Download **[`install.bat`](https://raw.githubusercontent.com/nilanshpratapanand/Context-Manager-Context-OS/main/install.bat)** (right-click → *Save link as*) and double-click it. Or paste this into PowerShell:
+Download **[`install.bat`](https://github.com/nilanshpratapanand/Context-Manager-Context-OS/releases/latest/download/install.bat)** from the [latest release](https://github.com/nilanshpratapanand/Context-Manager-Context-OS/releases/latest) and double-click it. Or paste this into PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/nilanshpratapanand/Context-Manager-Context-OS/main/install.bat -OutFile install.bat; .\install.bat
