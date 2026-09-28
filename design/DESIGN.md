@@ -1,26 +1,26 @@
 ---
 version: alpha
-name: ContextOS Ledger
+name: ContextOS Ultramarine Ledger
 description: Calm editorial chat workspace that makes conversation memory visible.
 colors:
-  primary: "#0B6B5C"
-  neutral: "#FBFAF7"
+  primary: "#2431E8"
+  neutral: "#F4F2EC"
   surface: "#FFFFFF"
-  sunken: "#F2F0EA"
-  text: "#16181D"
-  muted: "#565B66"
-  border: "#E2DFD6"
+  sunken: "#EAE7DE"
+  text: "#0E0F13"
+  muted: "#52576A"
+  border: "#DAD6CA"
   error: "#B42318"
   success: "#0B6B3A"
   warning: "#8A5300"
 typography:
-  display: { fontFamily: "Iowan Old Style, Palatino, Georgia, serif", fontSize: 32px, fontWeight: 600, lineHeight: 1.2, letterSpacing: -0.01em }
-  title: { fontFamily: "Iowan Old Style, Palatino, Georgia, serif", fontSize: 24px, fontWeight: 600, lineHeight: 1.2 }
-  heading: { fontFamily: "system-ui, sans-serif", fontSize: 18px, fontWeight: 600, lineHeight: 1.3 }
-  body: { fontFamily: "system-ui, sans-serif", fontSize: 15px, fontWeight: 400, lineHeight: 1.6 }
-  label: { fontFamily: "system-ui, sans-serif", fontSize: 13px, fontWeight: 600, lineHeight: 1.3 }
-  caption: { fontFamily: "system-ui, sans-serif", fontSize: 12px, fontWeight: 400, lineHeight: 1.4 }
-  mono: { fontFamily: "ui-monospace, Consolas, monospace", fontSize: 12px, fontWeight: 400, lineHeight: 1.5 }
+  display: { fontFamily: "Bricolage Grotesque, system-ui, sans-serif", fontSize: 32px, fontWeight: 600, lineHeight: 1.2, letterSpacing: -0.01em }
+  title: { fontFamily: "Bricolage Grotesque, system-ui, sans-serif", fontSize: 24px, fontWeight: 600, lineHeight: 1.2 }
+  heading: { fontFamily: "Geist, system-ui, sans-serif", fontSize: 18px, fontWeight: 600, lineHeight: 1.3 }
+  body: { fontFamily: "Geist, system-ui, sans-serif", fontSize: 15px, fontWeight: 400, lineHeight: 1.6 }
+  label: { fontFamily: "Geist, system-ui, sans-serif", fontSize: 13px, fontWeight: 600, lineHeight: 1.3 }
+  caption: { fontFamily: "Geist, system-ui, sans-serif", fontSize: 12px, fontWeight: 400, lineHeight: 1.4 }
+  mono: { fontFamily: "Geist Mono, ui-monospace, monospace", fontSize: 12px, fontWeight: 400, lineHeight: 1.5 }
 rounded: { control: 8px, card: 12px, sheet: 16px, pill: 999px }
 spacing: { xs: 4px, sm: 8px, md: 16px, lg: 24px, xl: 48px }
 components:
@@ -29,6 +29,8 @@ components:
   ledger-entry: { backgroundColor: "{colors.surface}", textColor: "{colors.text}", rounded: "{rounded.card}", padding: 8px 12px }
   handoff-seam: { textColor: "{colors.primary}", padding: 8px 0 }
 ---
+
+> Colour and type were revised in the premium pass: see `PREMIUM.md`. Where this file and `PREMIUM.md` disagree, `PREMIUM.md` wins.
 
 ## Overview
 Family 1 editorial minimalism with a family 4 data-dense ledger. Dials: variance 2, motion 3, density 6. Audience: students and solo builders using free AI tiers, daily, on laptops and phones. Feeling: calm, trustworthy, "my memory on my machine". **One memorable element: the handoff seam**, a full-width rule in the thread reading `Groq ⟶ Gemini · 9 entries carried`, clickable and keyboard reachable.
