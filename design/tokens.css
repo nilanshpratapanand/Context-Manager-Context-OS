@@ -1,0 +1,24 @@
+/* ContextOS design tokens. Family: editorial minimalism x data-dense (ledger). Verify: contrast.py --css design/tokens.css */
+:root{
+  --bg:#FBFAF7; --surface:#FFFFFF; --sunken:#F2F0EA; --text:#16181D; --muted:#565B66; --border:#E2DFD6;
+  --accent:#0B6B5C; --accent-ink:#FFFFFF; --danger:#B42318; --success:#0B6B3A; --warn:#8A5300;
+  --user-bg:#ECEAE2; --memory:#0B6B5C;
+  --font-display:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --font-body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,monospace;
+  --fs-1:.75rem; --fs-2:.8125rem; --fs-3:.9375rem; --fs-4:1.125rem; --fs-5:1.5rem; --fs-6:2rem;
+  --lh-body:1.6; --lh-tight:1.2; --measure:68ch;
+  --s-1:4px; --s-2:8px; --s-3:12px; --s-4:16px; --s-5:24px; --s-6:32px; --s-7:48px;
+  --r-control:8px; --r-card:12px; --r-sheet:16px; --r-pill:999px;
+  --shadow-1:0 1px 2px rgba(22,24,29,.06); --shadow-2:0 10px 30px rgba(22,24,29,.14);
+  --dur-fast:120ms; --dur-base:220ms; --dur-slow:360ms;
+  --ease-standard:cubic-bezier(.4,0,.2,1); --ease-enter:cubic-bezier(0,0,.2,1); --ease-exit:cubic-bezier(.4,0,1,1);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#141514; --surface:#1B1C1B; --sunken:#101110; --text:#ECEBE6; --muted:#A3A69F; --border:#2C2E2B;
+  --accent:#5FCDB5; --accent-ink:#06211B; --danger:#FF8F84; --success:#6FD59A; --warn:#F0B35A;
+  --user-bg:#262825; --memory:#5FCDB5; --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 10px 30px rgba(0,0,0,.55);}}
+:root[data-theme="dark"]{
+  --bg:#141514; --surface:#1B1C1B; --sunken:#101110; --text:#ECEBE6; --muted:#A3A69F; --border:#2C2E2B;
+  --accent:#5FCDB5; --accent-ink:#06211B; --danger:#FF8F84; --success:#6FD59A; --warn:#F0B35A;
+  --user-bg:#262825; --memory:#5FCDB5; --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 10px 30px rgba(0,0,0,.55);}
