@@ -27,6 +27,24 @@ rem confirm it actually runs (a stub python.exe from the Store does not)
 %PY% -c "import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)" >nul 2>&1
 if errorlevel 1 goto badversion
 
+rem ------------------------------------------------- update to the latest release
+rem Checks GitHub for a newer release (5 s timeout, silent when offline) and
+rem installs it over this folder. .env, chats and keys are never touched.
+rem Skip with:  set CONTEXTOS_NO_UPDATE=1   The block below is parsed as a whole,
+rem so it is safe for the update to replace this very file while it runs.
+if defined CONTEXTOS_NO_UPDATE goto noupdate
+if /i "%~1"=="/noupdate" goto noupdate
+echo Checking for a newer ContextOS release...
+%PY% -m contextos.update
+if errorlevel 10 (
+  echo.
+  echo Restarting on the new version...
+  timeout /t 2 /nobreak >nul
+  call "%~f0" /noupdate
+  exit /b
+)
+:noupdate
+
 rem Drop any stale bytecode so an updated .py can never be shadowed by an old .pyc.
 if exist "contextos\__pycache__" rd /s /q "contextos\__pycache__" 2>nul
 if exist "tests\__pycache__" rd /s /q "tests\__pycache__" 2>nul
@@ -60,6 +78,7 @@ echo.
 echo   ---- play with it ------------------------------------------
 echo   9.  Sample project    seed a store and try a handoff
 echo   C.  Command prompt    run contextos commands yourself
+echo   U.  Update            get the latest release now
 echo   R.  Reset             delete ALL chats and local databases
 echo.
 echo   0.  Exit
@@ -79,6 +98,7 @@ if /i "%choice%"=="7" goto dryrun
 if /i "%choice%"=="8" goto livereal
 if /i "%choice%"=="9" goto sample
 if /i "%choice%"=="C" goto shell
+if /i "%choice%"=="U" goto update
 if /i "%choice%"=="R" goto reset
 if /i "%choice%"=="0" exit /b 0
 goto menu
@@ -246,6 +266,18 @@ echo Type "exit" to return to the menu.
 echo.
 cmd /k prompt contextos$G$S
 goto menu
+
+:update
+cls
+%PY% -m contextos.update --check
+%PY% -m contextos.update
+if errorlevel 10 (
+  echo.
+  echo Updated. Close this window and run RUN.bat again to start the new version.
+  pause
+  exit /b 0
+)
+goto done
 
 :reset
 cls

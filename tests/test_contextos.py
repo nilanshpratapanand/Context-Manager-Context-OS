@@ -1607,5 +1607,83 @@ def test_engine_reads_lane_order_from_env():
     assert e.fast == ["groq-fast"]
 
 
+# --------------------------------------------------------------- self-update
+def _release_zip(files, top="Context-Manager-Context-OS-9.9.9"):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in files.items():
+            z.writestr(f"{top}/{name}" if top else name, data)
+    return buf.getvalue()
+
+
+def test_update_version_compare():
+    from contextos.update import is_newer, parse_version
+    assert parse_version("v0.3.0") == (0, 3, 0) and parse_version("nightly") is None
+    assert is_newer("v0.3.0", "0.2.0") and is_newer("v1.0", "0.9.9")
+    assert not is_newer("v0.2.0", "0.2.0") and not is_newer("v0.1.9", "0.2.0")
+    assert not is_newer("weird", "0.2.0")            # never update to something unparseable
+
+
+def test_update_never_touches_user_data():
+    from contextos.update import apply_zip, protected
+    for rel in (".env", "chat_data/x.json", "contextos.db", "dashboard.db-wal", ".venv/a", "mcp.json", ".git/HEAD"):
+        assert protected(rel), rel
+    assert not protected("contextos/server.py") and not protected("RUN.bat")
+    root = __import__("pathlib").Path(tempfile.mkdtemp())
+    (root / ".env").write_text("GROQ_API_KEY=keep-me")
+    (root / "chat_data").mkdir()
+    (root / "chat_data" / "c.json").write_text("chat")
+    (root / "contextos").mkdir()
+    (root / "contextos" / "server.py").write_text("old")
+    data = _release_zip({"contextos/server.py": "new", ".env": "GROQ_API_KEY=evil",
+                         "chat_data/c.json": "evil", "contextos/new.py": "n", "README.md": "r"})
+    stats = apply_zip(data, root, "0.2.0", "9.9.9")
+    assert (root / ".env").read_text() == "GROQ_API_KEY=keep-me"
+    assert (root / "chat_data" / "c.json").read_text() == "chat"
+    assert (root / "contextos" / "server.py").read_text() == "new"
+    assert (root / "contextos" / "new.py").exists()
+    assert (root / ".update_backup" / "v0.2.0" / "contextos" / "server.py").read_text() == "old"
+    assert stats["written"] == 3 and stats["backed_up"] == 1
+
+
+def test_update_removes_only_files_it_installed():
+    from contextos.update import apply_zip
+    root = __import__("pathlib").Path(tempfile.mkdtemp())
+    first = _release_zip({"contextos/server.py": "1", "contextos/old_module.py": "x"})
+    apply_zip(first, root, "0.1.0", "0.2.0")
+    (root / "my_notes.txt").write_text("mine")           # user's own file, never in a release
+    second = _release_zip({"contextos/server.py": "2"})
+    stats = apply_zip(second, root, "0.2.0", "0.3.0")
+    assert not (root / "contextos" / "old_module.py").exists() and stats["removed"] == 1
+    assert (root / "my_notes.txt").read_text() == "mine"
+    assert (root / "contextos" / "server.py").read_text() == "2"
+
+
+def test_update_rejects_unsafe_or_foreign_archives():
+    from contextos.update import apply_zip
+    root = __import__("pathlib").Path(tempfile.mkdtemp())
+    with raises(ValueError):
+        apply_zip(_release_zip({"contextos/server.py": "x", "../evil.py": "x"}), root, "0", "1")
+    with raises(ValueError):
+        apply_zip(_release_zip({"README.md": "not contextos"}), root, "0", "1")
+    assert not list(root.iterdir())
+
+
+def test_update_is_silent_when_offline():
+    import urllib.error
+    from contextos import update
+    real = update._get
+    def boom(*a, **k):
+        raise urllib.error.URLError("offline")
+    update._get = boom
+    try:
+        assert update.latest_release("a/b") is None
+        assert update.run() == 0
+    finally:
+        update._get = real
+
+
 if __name__ == "__main__":
     raise SystemExit(_run())
