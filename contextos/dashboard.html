@@ -5,27 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ContextOS Chat</title>
 <style>
+/* Ledger design system: see design/DESIGN.md. Old names are aliases of the new tokens. */
 :root{
-  --bg:#ffffff; --side:#f7f7f8; --panel:#ffffff; --soft:#f3f4f6; --line:#e5e7eb;
-  --text:#1f2328; --dim:#6b7280; --faint:#8b929c; --accent:#2563eb; --accent-ink:#fff;
-  --user:#eef2ff; --user-line:#dfe6ff; --good:#16a34a; --warn:#b45309; --bad:#dc2626;
-  --warn-bg:#fff7ed; --warn-line:#fed7aa; --bad-bg:#fef2f2; --bad-line:#fecaca;
-  --code:#0d1117; --code-ink:#e6edf3; --smart:#7c3aed; --smart-bg:#f3e8ff;
-  --fast:#0e7490; --fast-bg:#e0f7fa; --shadow:0 8px 30px rgba(0,0,0,.12);
+  --bg:#FBFAF7; --surface:#FFFFFF; --sunken:#F2F0EA; --text:#16181D; --muted:#565B66; --border:#E2DFD6;
+  --accent:#0B6B5C; --accent-ink:#FFFFFF; --danger:#B42318; --success:#0B6B3A; --warn:#8A5300;
+  --user-bg:#ECEAE2; --code:#0d1117; --code-ink:#e6edf3;
+  --font-display:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
   --mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,monospace;
+  --r-control:8px; --r-card:12px; --r-sheet:16px;
+  --dur-fast:120ms; --dur-base:220ms; --dur-slow:360ms;
+  --ease:cubic-bezier(.4,0,.2,1); --ease-in:cubic-bezier(0,0,.2,1);
+  --shadow:0 10px 30px rgba(22,24,29,.14);
+  --side:var(--sunken); --panel:var(--surface); --soft:var(--sunken); --line:var(--border);
+  --dim:var(--muted); --faint:#6B707A; --user:var(--user-bg); --user-line:var(--border);
+  --good:var(--success); --bad:var(--danger);
+  --warn-bg:#FBF3E4; --warn-line:#E8D3A8; --bad-bg:#FDF0EE; --bad-line:#F1C5BF;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#1a1b1e; --side:#131416; --panel:#1f2023; --soft:#26282c; --line:#303236;
-  --text:#e8e9eb; --dim:#9aa0a6; --faint:#7d838a; --accent:#6ea8fe; --accent-ink:#0b1220;
-  --user:#2a3142; --user-line:#344058; --warn:#f0b35a; --warn-bg:#2b2112; --warn-line:#5c4424;
-  --bad:#ff8a8a; --bad-bg:#2b1616; --bad-line:#5c2a2a; --smart:#c4a5ff; --smart-bg:#2d2442;
-  --fast:#7fd6e6; --fast-bg:#15323a; --shadow:0 8px 30px rgba(0,0,0,.5);}}
+  --bg:#141514; --surface:#1B1C1B; --sunken:#101110; --text:#ECEBE6; --muted:#A3A69F; --border:#2C2E2B;
+  --accent:#5FCDB5; --accent-ink:#06211B; --danger:#FF8F84; --success:#6FD59A; --warn:#F0B35A;
+  --user-bg:#262825; --faint:#8A8E87; --warn-bg:#2b2112; --warn-line:#5c4424; --bad-bg:#2b1616; --bad-line:#5c2a2a;
+  --shadow:0 10px 30px rgba(0,0,0,.55);}}
 :root[data-theme="dark"]{
-  --bg:#1a1b1e; --side:#131416; --panel:#1f2023; --soft:#26282c; --line:#303236;
-  --text:#e8e9eb; --dim:#9aa0a6; --faint:#7d838a; --accent:#6ea8fe; --accent-ink:#0b1220;
-  --user:#2a3142; --user-line:#344058; --warn:#f0b35a; --warn-bg:#2b2112; --warn-line:#5c4424;
-  --bad:#ff8a8a; --bad-bg:#2b1616; --bad-line:#5c2a2a; --smart:#c4a5ff; --smart-bg:#2d2442;
-  --fast:#7fd6e6; --fast-bg:#15323a; --shadow:0 8px 30px rgba(0,0,0,.5);}
+  --bg:#141514; --surface:#1B1C1B; --sunken:#101110; --text:#ECEBE6; --muted:#A3A69F; --border:#2C2E2B;
+  --accent:#5FCDB5; --accent-ink:#06211B; --danger:#FF8F84; --success:#6FD59A; --warn:#F0B35A;
+  --user-bg:#262825; --faint:#8A8E87; --warn-bg:#2b2112; --warn-line:#5c4424; --bad-bg:#2b1616; --bad-line:#5c2a2a;
+  --shadow:0 10px 30px rgba(0,0,0,.55);}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);
@@ -41,9 +46,9 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,input:focus-visible,
 /* ------------------------------------------------------------- sidebar */
 #side{width:268px;flex:none;background:var(--side);border-right:1px solid var(--line);
   display:flex;flex-direction:column;min-height:0}
-.brand{display:flex;align-items:center;gap:8px;padding:14px 14px 6px;font-weight:650}
+.brand{display:flex;align-items:center;gap:8px;padding:14px 14px 6px;font-weight:600;font-family:var(--font-display);font-size:17px}
 .brand .logo{width:24px;height:24px;border-radius:7px;background:var(--accent);
-  color:var(--accent-ink);display:grid;place-items:center;font-size:13px}
+  color:var(--accent-ink);display:grid;place-items:center;font-size:13px;font-family:var(--font-display)}
 .newchat{margin:8px 10px;display:flex;align-items:center;gap:8px;padding:9px 12px;
   border:1px solid var(--line);border-radius:10px;background:var(--panel);font-weight:550}
 .newchat:hover{background:var(--soft)}
@@ -70,7 +75,10 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,input:focus-visible,
 .sidefoot button{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;
   font-size:13.5px;color:var(--dim)}
 .sidefoot button:hover{background:var(--soft);color:var(--text)}
-#provBtn{flex:1}
+#provBtn{flex:1;min-width:0}
+#provLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidefoot{gap:2px!important;padding:8px 6px!important}
+.sidefoot button{padding:8px 7px!important}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
 .dot.ok{background:var(--good)} .dot.warn{background:#f59e0b} .dot.bad{background:var(--bad)}
 
@@ -78,7 +86,7 @@ button:focus-visible,a:focus-visible,textarea:focus-visible,input:focus-visible,
 #main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
 .top{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);
   min-height:54px}
-.top .title{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;
+.top .title{flex:1;min-width:0;font-weight:600;font-family:var(--font-display);font-size:16px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;padding:4px 6px;border-radius:6px;text-align:left}
 .top .title:hover{background:var(--soft)}
 .iconbtn{padding:7px;border-radius:8px;color:var(--dim);display:flex;align-items:center;gap:6px;
@@ -103,9 +111,10 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
 .msg{margin:0 0 26px;position:relative}
 .msg.user{display:flex;flex-direction:column;align-items:flex-end}
 .msg.user .bubble{background:var(--user);border:1px solid var(--user-line);
-  padding:9px 14px;border-radius:18px 18px 4px 18px;max-width:85%;white-space:pre-wrap;
+  padding:9px 14px;border-radius:16px 16px 4px 16px;max-width:85%;white-space:pre-wrap;
   word-wrap:break-word}
-.msg.bot .body{word-wrap:break-word}
+.msg.bot .body{word-wrap:break-word;max-width:68ch}
+.msg.bot .body .codeblock,.msg.bot .body table{max-width:100%}
 .actions{display:flex;align-items:center;gap:2px;margin-top:4px;color:var(--faint);min-height:28px}
 .msg.user .actions{opacity:0}
 .msg.user:hover .actions,.msg.user .actions:focus-within{opacity:1}
@@ -117,8 +126,8 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
   margin-left:4px;flex-wrap:wrap}
 .lane{font-size:10.5px;font-weight:650;text-transform:uppercase;letter-spacing:.5px;
   padding:0 6px;border-radius:999px;line-height:17px}
-.lane.smart{color:var(--smart);background:var(--smart-bg)}
-.lane.fast{color:var(--fast);background:var(--fast-bg)}
+.lane.smart{color:var(--accent-ink);background:var(--text)}
+.lane.fast{color:var(--text);background:transparent;box-shadow:inset 0 0 0 1px var(--muted)}
 .details{margin-top:6px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;
   font-size:12.5px;color:var(--dim);background:var(--panel)}
 .details h4{margin:8px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
@@ -126,8 +135,17 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
 .details h4:first-child{margin-top:0}
 .details code{font-family:var(--mono);font-size:11.5px}
 .details ul{margin:0;padding-left:16px}
-.notice{font-size:12.5px;background:var(--warn-bg);border:1px solid var(--warn-line);
-  color:var(--warn);border-radius:9px;padding:6px 10px;margin:0 0 8px}
+.seam{display:flex;align-items:center;gap:12px;width:100%;margin:6px 0 14px;padding:4px 0;color:var(--accent);
+  font-size:12.5px;font-weight:600;text-align:left}
+.seam::before,.seam::after{content:"";flex:1;height:1px;background:currentColor;opacity:.45}
+.seam::before{transform-origin:left;animation:draw var(--dur-slow) var(--ease-in) both}
+.seam::after{transform-origin:right;animation:draw var(--dur-slow) var(--ease-in) both}
+.seam span{white-space:nowrap;max-width:80%;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.seam:hover span,.seam:focus-visible span{text-decoration:underline}
+.seam.fail{color:var(--danger)}
+.seam.sample{cursor:default;margin:0 auto 26px;max-width:460px}
+.seam.sample:hover span{text-decoration:none}
+@keyframes draw{from{transform:scaleX(0)}to{transform:none}}
 .err{background:var(--bad-bg);border:1px solid var(--bad-line);color:var(--bad);
   border-radius:10px;padding:10px 12px;font-size:14px}
 .err button{margin-top:8px;border:1px solid var(--bad-line);border-radius:8px;padding:4px 12px;
@@ -187,8 +205,8 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
 
 /* ------------------------------------------------------------ composer */
 .composer-wrap{padding:0 20px 14px}
-.composer{max-width:780px;margin:0 auto;border:1px solid var(--line);border-radius:18px;
-  background:var(--panel);box-shadow:0 2px 12px rgba(0,0,0,.05);padding:8px 8px 8px 16px;
+.composer{max-width:780px;margin:0 auto;border:1px solid var(--line);border-radius:var(--r-sheet);
+  background:var(--panel);box-shadow:0 1px 2px rgba(22,24,29,.06);padding:8px 8px 8px 16px;
   display:flex;align-items:flex-end;gap:8px}
 .composer:focus-within{border-color:var(--accent)}
 #input{flex:1;border:0;outline:0;resize:none;background:transparent;color:var(--text);
@@ -206,7 +224,7 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
 
 /* ---------------------------------------------------------- empty state */
 .welcome{text-align:center;padding:12vh 10px 20px}
-.welcome h1{font-size:28px;margin:0 0 6px;font-weight:650}
+.welcome h1{font-family:var(--font-display);font-size:32px;line-height:1.2;margin:0 0 8px;font-weight:600;letter-spacing:-.01em}
 .welcome p{color:var(--dim);margin:0 auto 26px;max-width:520px}
 .chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;
   max-width:640px;margin:0 auto;text-align:left}
@@ -220,7 +238,7 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
   display:none;flex-direction:column;min-height:0}
 #memory.open{display:flex}
 .panel-h{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;
-  border-bottom:1px solid var(--line);font-weight:600}
+  border-bottom:1px solid var(--line);font-weight:600;font-family:var(--font-display);font-size:16px}
 .panel-b{flex:1;overflow-y:auto;padding:12px 14px;font-size:13px}
 .panel-b p.dim{color:var(--dim);margin:0 0 10px;font-size:12.5px}
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
@@ -229,7 +247,7 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
 .unit{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 30px 8px 10px;
   margin-bottom:7px;position:relative}
 .unit .k{font-size:10.5px;font-weight:650;text-transform:uppercase;letter-spacing:.5px;color:var(--dim)}
-.unit .k.goal{color:var(--accent)}.unit .k.constraint{color:#d97706}.unit .k.decision{color:var(--good)}
+.unit .k.goal{color:var(--accent)}.unit .k.constraint{color:var(--warn)}.unit .k.decision{color:var(--good)}
 .unit .k.blocker{color:var(--bad)}
 .unit .addr{font-family:var(--mono);font-size:11px;color:var(--faint);word-break:break-all}
 .unit .v{margin-top:3px;word-wrap:break-word}
@@ -237,9 +255,12 @@ select.model{font:inherit;font-size:12.5px;padding:5px 8px;border-radius:8px;
 .unit .x:hover{background:var(--soft);color:var(--bad)}
 .unit .x .icon{width:15px;height:15px}
 .conflict{border-color:var(--warn-line);background:var(--warn-bg)}
+.unit.fresh{animation:entry var(--dur-base) var(--ease-in) both,tint 1.2s var(--ease) both}
+@keyframes entry{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes tint{from{background:color-mix(in srgb,var(--accent) 22%,var(--panel))}to{background:var(--panel)}}
 
 /* --------------------------------------------------------------- dialog */
-dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--text);
+dialog{border:1px solid var(--line);border-radius:var(--r-sheet);background:var(--panel);color:var(--text);
   padding:0;width:min(660px,94vw);max-height:86vh;box-shadow:var(--shadow)}
 dialog::backdrop{background:rgba(0,0,0,.4)}
 dialog .panel-b{max-height:70vh}
@@ -277,7 +298,7 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
 .safety{margin-top:14px;font-size:12.5px;color:var(--dim);background:var(--soft);border-radius:10px;
   padding:10px 12px}
 .bhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-.bhead h2{margin:0;font-size:18px;flex:1;min-width:200px}
+.bhead h2{margin:0;font-family:var(--font-display);font-size:22px;font-weight:600;flex:1;min-width:200px}
 .pill{font-size:11.5px;font-weight:650;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--dim)}
 .pill.running{color:var(--accent)} .pill.done{color:var(--good)} .pill.failed,.pill.stopped{color:var(--bad)}
 .phase{margin:22px 0 8px;font-weight:650;font-size:14px;display:flex;gap:8px;align-items:center}
@@ -336,9 +357,32 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
   color:var(--text);border-radius:12px;padding:12px 14px;text-align:left;font-size:13.5px}
 .setup-banner .btn{margin-top:8px}
 
+.board{display:grid;grid-template-columns:1fr;gap:12px;margin:0 0 18px}
+.stepper{display:flex;gap:4px;flex-wrap:wrap}
+.step{flex:1;min-width:92px;padding:8px 10px;border-radius:var(--r-control);background:var(--soft);font-size:12.5px;
+  color:var(--faint);display:flex;gap:6px;align-items:center;font-weight:600}
+.step .st{font-weight:400}
+.step.done{color:var(--text)} .step.done .ic{color:var(--good)}
+.step.now{color:var(--text);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.step.now .ic{color:var(--accent)}
+.feat{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--r-control);background:var(--panel);
+  border:1px solid var(--line);font-size:13.5px}
+.feat .fn{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feat .fs{font-size:12px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+.feat .fw{font-size:12px;font-weight:650;white-space:nowrap}
+.feat.pass .fw{color:var(--good)} .feat.fail .fw{color:var(--bad)} .feat.now .fw{color:var(--accent)}
+.feat.now{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.feat .bar{width:56px;height:4px;border-radius:2px;background:var(--soft);overflow:hidden;flex:none}
+.feat .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width var(--dur-slow) var(--ease)}
+.feat.pass .bar i{width:100%;background:var(--good)} .feat.now .bar i{width:45%}
+.feat.fail .bar i{width:100%;background:var(--bad)}
+.sr-still{position:absolute;left:-9999px}
+body.still *,body.still *::before,body.still *::after{animation:none!important;transition:none!important}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}}
 /* --------------------------------------------------------------- mobile */
 #scrim{display:none}
-@media (max-width:900px){
+@media (max-width:1100px){
   #memory.open{position:fixed;right:0;top:0;bottom:0;z-index:30;box-shadow:var(--shadow);
     width:min(360px,92vw)}
 }
@@ -382,6 +426,8 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
 </svg>
 
@@ -404,6 +450,8 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
         <svg class="icon"><use href="#i-key"/></svg></button>
       <button id="connBtn" title="Connectors (MCP) and skills" aria-label="Connectors and skills">
         <svg class="icon"><use href="#i-plug"/></svg></button>
+      <button id="stillBtn" title="Hold still: turn off all animation" aria-label="Hold still" aria-pressed="false">
+        <svg class="icon"><use href="#i-pause"/></svg></button>
       <button id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
         <svg class="icon" id="themeIcon"><use href="#i-moon"/></svg></button>
     </div>
@@ -424,7 +472,7 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
       <select class="model" id="modelSel" title="Try this model first"></select>
       <button class="iconbtn" id="exportBtn" title="Continue in another AI: copy this chat's context"
         aria-label="Continue in another AI"><svg class="icon"><use href="#i-share"/></svg></button>
-      <button class="iconbtn" id="memBtn" aria-pressed="false" title="What the model remembers about this chat">
+      <button class="iconbtn" id="memBtn" aria-pressed="false" title="Ledger: what the model remembers about this chat (Ctrl+.)">
         <svg class="icon"><use href="#i-brain"/></svg><span id="memCount">0</span></button>
     </header>
 
@@ -450,8 +498,8 @@ body.mode-build #exportBtn, body.mode-build #memBtn{display:none}
         </div>
       </div>
 
-      <aside id="memory" aria-label="Chat memory">
-        <div class="panel-h">Memory
+      <aside id="memory" aria-label="Chat memory ledger">
+        <div class="panel-h">Ledger
           <button class="iconbtn" id="memClose" aria-label="Close memory"><svg class="icon"><use href="#i-x"/></svg></button></div>
         <div class="panel-b" id="memBody"></div>
       </aside>
@@ -650,6 +698,9 @@ function friendlyError(e){
   if(/Failed to fetch|NetworkError|HTTP 5/.test(s)) return 'Lost the connection to the ContextOS server. Is it still running?';
   return s;
 }
+const seamHtml = (from, to, tokens, failed) =>
+  `<button class="seam${failed ? ' fail' : ''}" data-seam title="Open the ledger: what was carried across"
+    aria-label="${esc(from)} handed off to ${esc(to)}, ${tokens} tokens carried. Open ledger"><span>${esc(from)} \u27F6 ${esc(to)} \u00B7 ${tokens} tokens carried</span></button>`;
 const laneTag = l => l ? `<span class="lane ${esc(l)}">${esc(l)}</span>` : '';
 
 // ---------------------------------------------------------------- scroll
@@ -770,6 +821,7 @@ function renderThread(){
     t.innerHTML = `<div class="welcome">${setup}<h1>What are we working on?</h1>
       <p>Each chat keeps its own memory. Hard questions go to the strongest free models, easy ones to
       the fastest — and if a model fails mid-answer, another one picks up where it left off.</p>
+      <div class="seam sample" role="img" aria-label="Example: a handoff from one model to another with the memory carried"><span>Groq \u27F6 Gemini \u00B7 412 tokens carried</span></div>
       <div class="chips">${SUGGEST.map(([a, b]) =>
         `<button class="chip" data-suggest="${esc(a + ': ' + b)}"><b>${esc(a)}</b><span>${esc(b)}</span></button>`).join('')}
       </div></div>`;
@@ -787,7 +839,8 @@ function messageHtml(m, isLast){
       <button data-edit title="Edit" aria-label="Edit message">${icon('edit')}</button></div></div>`;
   const meta = m.meta || {};
   const sw = (meta.switched || []).length;
-  return `<div class="msg bot" data-id="${esc(m.id)}">
+  const seams = (meta.switched || []).map(x => seamHtml(x.from, x.to, x.packet_tokens)).join('');
+  return `<div class="msg bot" data-id="${esc(m.id)}">${seams}
     <div class="body md">${md(m.content)}</div>
     <div class="actions">
       <button data-copy title="Copy" aria-label="Copy reply">${icon('copy')}</button>
@@ -816,6 +869,7 @@ function detailsHtml(meta){
 }
 
 $('#thread').addEventListener('click', e => {
+  if(e.target.closest('[data-seam]')){ if(!S.memoryOpen) $('#memBtn').click(); return; }
   if(e.target.closest('[data-open-keys]')){ showKeys(); return; }
   const sug = e.target.closest('[data-suggest]');
   if(sug){ $('#input').value = sug.dataset.suggest; autosize(); send(); return; }
@@ -939,8 +993,8 @@ async function send(opts = {}){
         el.querySelector('.think').hidden = true; paint(); break;
       case 'switch':
         el.querySelector('.notices').insertAdjacentHTML('beforeend',
-          `<div class="notice">${esc(ev.from)} failed (${esc(ev.reason.slice(0, 60))}) — handed off to
-           <b>${esc(ev.to)}</b> with a ${ev.packet_tokens}-token ${esc(ev.direction)} packet</div>`);
+          seamHtml(ev.from, ev.to, ev.packet_tokens) +
+          `<div class="status" style="margin:-8px 0 8px">${esc(ev.from)} failed (${esc(ev.reason.slice(0, 60))}); ${esc(ev.to)} continued from memory.</div>`);
         toBottom(); break;
       case 'error':
         showError(el, friendlyError(ev.error), ev.attempts || []); return true;
@@ -1043,6 +1097,8 @@ async function refreshMemory(){
   const order = ['goal', 'constraint', 'decision', 'blocker', 'fact'];
   const rank = k => { const i = order.indexOf(k); return i < 0 ? 9 : i; };
   const units = [...m.units].sort((a, b) => rank(a.kind) - rank(b.kind));
+  const seen = (refreshMemory.seen ||= {}); const known = seen[S.convId];
+  seen[S.convId] = new Set(m.units.map(u => u.address));
   $('#memBody').innerHTML = `
     <p class="dim">Each turn, models get only the items relevant to your message — not the whole
     chat. Delete anything that is wrong.</p>
@@ -1051,10 +1107,10 @@ async function refreshMemory(){
     ${m.conflicts.map(c => `<div class="unit conflict"><div class="k">conflict</div>
       <div class="addr">${esc(c.address)}</div><div class="v">${esc(c.old_source)}: ${esc(c.old_value)}<br>
       ${esc(c.new_source)}: ${esc(c.new_value)}</div></div>`).join('')}
-    ${units.map(u => `<div class="unit"><div class="k ${esc(u.kind)}">${esc(u.kind)}</div>
+    ${units.map(u => `<div class="unit${known && !known.has(u.address) ? ' fresh' : ''}"><div class="k ${esc(u.kind)}">${esc(u.kind)}</div>
       <div class="addr">${esc(u.address)}</div><div class="v">${esc(u.value)}</div>
       <button class="x" data-forget="${esc(u.address)}" title="Forget" aria-label="Forget ${esc(u.address)}">${icon('x')}</button></div>`).join('')
-      || '<p class="dim">Nothing saved yet.</p>'}
+      || '<p class="dim">Nothing remembered yet. Facts, rules and decisions show up here.</p>'}
     <button class="btn" id="previewBtn" style="width:100%;margin-top:8px">Preview a handoff packet</button>`;
   $('#previewBtn').onclick = previewHandoff;
 }
@@ -1177,6 +1233,15 @@ function applyTheme(t){
   const dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
   $('#themeIcon').innerHTML = `<use href="#i-${dark ? 'sun' : 'moon'}"/>`;
 }
+function applyStill(on){
+  document.body.classList.toggle('still', on); $('#stillBtn').setAttribute('aria-pressed', String(on));
+  $('#stillBtn').style.color = on ? 'var(--accent)' : '';
+}
+$('#stillBtn').onclick = () => { const on = !document.body.classList.contains('still'); store.set('still', on ? '1' : '0'); applyStill(on); };
+applyStill(store.get('still') === '1');
+document.addEventListener('keydown', e => {
+  if((e.ctrlKey || e.metaKey) && e.key === '.'){ e.preventDefault(); if(!inBuild()) $('#memBtn').click(); }
+});
 $('#themeBtn').onclick = () => {
   const cur = document.documentElement.dataset.theme ||
     (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -1275,6 +1340,7 @@ async function openBuild(id){
       <button class="btn" id="bStop">Stop</button></div>
     <div class="ev faint">Project folder: <code>${esc(info.workspace)}</code></div>
     ${getBar(info)}
+    <div class="board" id="board"></div>
     <div id="timeline" aria-live="polite"></div>
     <div class="bcompose" id="bCompose" hidden>
       <form class="composer" id="bChangeForm">
@@ -1284,7 +1350,11 @@ async function openBuild(id){
       </form>
       <div class="hint">ContextOS makes the change, updates the tests and runs them all before calling it done.</div>
     </div>`;
-  B.info = info;
+  B.info = info; boardReset();
+  if(info.plan && info.plan.features) BD.feats = info.plan.features;
+  (info.results || []).forEach(r => BD.results[r.name] = {passed:r.passed});
+  if(info.archived){ BD.phase = 'report'; }
+  boardRender();
   if(info.archived) renderArchived(info);
   $('#bStop').onclick = async () => {
     if(!confirm('Stop this build?')) return;
@@ -1392,6 +1462,7 @@ function setBuildStatus(s){
   const el = $('#bStatus'); if(el){ el.textContent = s; el.className = 'pill ' + s; }
   const finished = ['done', 'failed', 'stopped', 'interrupted'].includes(s);
   const b = $('#bStop'); if(b) b.hidden = finished;
+  boardRender();
   const c = $('#bCompose'); if(c) c.hidden = !finished;
 }
 function tl(html){
@@ -1402,6 +1473,28 @@ function tl(html){
   if(stick) sc.scrollTop = sc.scrollHeight;
   return t.lastElementChild;
 }
+const STEPS = [['research','Research'],['plan','Plan'],['build','Build'],['security','Review'],['report','Report']];
+const BD = {feats:[], results:{}, cur:-1, phase:''};
+function boardReset(){ BD.feats = []; BD.results = {}; BD.phase = ''; }
+function boardRender(){
+  const el = $('#board'); if(!el) return;
+  const key = {research:'research', plan:'plan', review:'plan', build:'build', security:'security', report:'report'}[BD.phase] || '';
+  const idx = STEPS.findIndex(x => x[0] === key);
+  const finished = ['done','failed','stopped'].includes((($('#bStatus')||{}).textContent || ''));
+  const step = ([k, l], i) => {
+    const st = finished && idx < 0 ? 'done' : i < idx ? 'done' : i === idx ? (finished ? 'done' : 'now') : '';
+    return `<div class="step ${st}">${st === 'done' ? icon('check').replace('class="icon"', 'class="icon ic"') : `<span class="ic" aria-hidden="true">${st === 'now' ? '\u25CF' : '\u25CB'}</span>`}${l}
+      <span class="st">${st === 'done' ? 'done' : st === 'now' ? 'now' : ''}</span></div>`;
+  };
+  const feats = BD.feats.map((f, i) => {
+    const r = BD.results[f.name];
+    const cls = r ? (r.passed ? 'pass' : 'fail') : (BD.phase === 'build' && i === BD.cur ? 'now' : '');
+    const word = r ? (r.passed ? '\u2713 passed' : '\u2715 failed') : cls === 'now' ? '\u25CF building' : '\u25CB waiting';
+    return `<div class="feat ${cls}"><span class="fn">${esc(f.name)}</span>
+      <span class="bar" aria-hidden="true"><i></i></span><span class="fw">${word}</span></div>`;
+  }).join('');
+  el.innerHTML = `<div class="stepper" role="list" aria-label="Build phases">${STEPS.map(step).join('')}</div>${feats}`;
+}
 const PHASE = {research:'Research', plan:'Strategy & plan', review:'Your review', build:'Build',
                security:'Security', report:'Report'};
 function argBrief(a){
@@ -1411,6 +1504,9 @@ function argBrief(a){
 function renderBuildEvent(ev){
   switch(ev.type){
     case 'phase':
+      BD.phase = ev.phase;
+      if(ev.phase === 'build') BD.cur = Object.keys(BD.results).length;
+      boardRender();
       tl(`<div class="phase"><span class="n">${esc(PHASE[ev.phase] || ev.phase)}</span>${esc(ev.detail)}</div>`);
       setBuildStatus('running'); break;
     case 'step':
@@ -1427,7 +1523,7 @@ function renderBuildEvent(ev){
     case 'note': tl(`<div class="ev faint">${esc(ev.text)}</div>`); break;
     case 'research':
       tl(`<div class="card2"><h3>Research brief</h3><div class="md">${md(ev.brief || '')}</div></div>`); break;
-    case 'plan': tl(planCard(ev.plan, ev.edited)); break;
+    case 'plan': BD.feats = (ev.plan && ev.plan.features) || []; boardRender(); tl(planCard(ev.plan, ev.edited)); break;
     case 'plan_review': renderPlanReview(ev); break;
     case 'approval': renderApproval(ev); break;
     case 'answered': {
@@ -1437,6 +1533,8 @@ function renderBuildEvent(ev){
       loadBuilds(); break;
     }
     case 'verify':
+      if(ev.passed || ev.round > 1) BD.results[ev.feature] = {passed:ev.passed};
+      BD.cur = Object.keys(BD.results).length; boardRender();
       tl(`<div class="card2 ${ev.passed ? 'pass' : 'fail'}"><span class="tag ${ev.passed ? 'pass' : 'fail'}">${ev.passed ? 'PASS' : 'FAIL'}</span>
         <b>${esc(ev.feature)}</b> <span style="color:var(--faint)">· round ${ev.round} · run by ContextOS, not the model</span>
         <details><summary><code>${esc(ev.command)}</code></summary><pre>${esc(ev.output)}</pre></details></div>`); break;
