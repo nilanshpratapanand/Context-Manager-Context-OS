@@ -42,6 +42,9 @@ from .live import (FAST_ORDER, MODEL_ENV_OVERRIDE, PROVIDERS, SMART_ORDER,
 from .units import KINDS, count_tokens
 
 HERE = pathlib.Path(__file__).parent
+# UI assets (bundled fonts, icons). Only plain file names under static/, no traversal.
+_STATIC = re.compile(r"^/static/((?:fonts/)?[\w.-]+\.(?:woff2|svg|png))$")
+_STATIC_TYPES = {".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png"}
 
 # The model is asked to start its reply with a block like:
 #   <context>
@@ -847,6 +850,13 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/", "/index.html"):
                 page = HERE / "dashboard.html"
                 self._send(200, page.read_bytes(), "text/html; charset=utf-8")
+            elif m := _STATIC.match(path):
+                f = (HERE / "static" / m.group(1)).resolve()
+                if not f.is_file() or (HERE / "static").resolve() not in f.parents:
+                    self._send(404, b"not found", "text/plain")
+                else:
+                    self._send(200, f.read_bytes(), _STATIC_TYPES[f.suffix],
+                               {"Cache-Control": "public, max-age=86400"})
             elif path == "/api/state":
                 self._json(eng.state())
             elif path == "/api/conversations":
