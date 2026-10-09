@@ -38,7 +38,7 @@ from .handoff import classify, should_migrate
 from .chats import ChatStore, title_from
 from . import attachments as attach
 from .tools import ToolError
-from .live import (FAST_ORDER, MODEL_ENV_OVERRIDE, PROVIDERS, SMART_ORDER,
+from .live import (usable, local_only, FAST_ORDER, MODEL_ENV_OVERRIDE, PROVIDERS, SMART_ORDER,
                    ProviderError, load_env, stream_events, strip_reasoning)
 from .units import KINDS, count_tokens
 
@@ -163,7 +163,7 @@ class Engine:
         def lane(var: str, default: list[str]) -> list[str]:
             raw = self.env.get(var, "")
             names = [n.strip() for n in raw.split(",") if n.strip()] or default
-            return [n for n in names if n in PROVIDERS and PROVIDERS[n].available(self.env)]
+            return [n for n in names if n in PROVIDERS and usable(PROVIDERS[n], self.env)]
         return lane("LLM_SMART_ORDER", SMART_ORDER), lane("LLM_FAST_ORDER", FAST_ORDER)
 
     @property
@@ -585,7 +585,7 @@ class Engine:
         if self.offline:
             return lambda mime, raw: f"[simulated description of a {mime} image, {len(raw)} bytes]"
         from .live import _post
-        return attach.gemini_describer(self.env, _post)
+        return None if local_only(self.env) else attach.gemini_describer(self.env, _post)
 
     def _pool(self):
         from .agent import ModelPool

@@ -82,5 +82,22 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(evs[-1]["type"], "done")
 
 
+class LocalOnlyTests(unittest.TestCase):
+    ENV = {"GROQ_API_KEY": "k", "GEMINI_API_KEY": "k", "OLLAMA_API_KEY": "ollama"}
+
+    def test_local_only_keeps_only_ollama(self):
+        from contextos.live import usable, PROVIDERS
+        env = {**self.ENV, "LLM_LOCAL_ONLY": "1"}
+        self.assertTrue(usable(PROVIDERS["ollama"], env))
+        self.assertFalse(usable(PROVIDERS["groq"], env))
+        self.assertTrue(usable(PROVIDERS["groq"], self.ENV))
+
+    def test_engine_lanes_and_no_cloud_vision(self):
+        from contextos.server import Engine
+        e = Engine(tempfile.mkdtemp(), {**self.ENV, "LLM_LOCAL_ONLY": "yes"}, offline=False)
+        self.assertEqual(set(e.order), {"ollama"})
+        self.assertIsNone(e._describer())
+
+
 if __name__ == "__main__":
     unittest.main()

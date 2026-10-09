@@ -158,6 +158,20 @@ FAST_ORDER = ["groq-fast", "openrouter-fast", "cloudflare-fast", "cohere-fast",
 
 
 # Cloudflare puts the account id in the path, not a header.
+def local_only(env: dict[str, str]) -> bool:
+    """LLM_LOCAL_ONLY=1: use only models served from this machine (Ollama); nothing
+    leaves the computer, including image descriptions."""
+    return env.get("LLM_LOCAL_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def is_local(p: "Provider", env: dict[str, str]) -> bool:
+    return resolve_url(p, env).startswith(("http://localhost", "http://127.0.0.1"))
+
+
+def usable(p: "Provider", env: dict[str, str]) -> bool:
+    return p.available(env) and (not local_only(env) or is_local(p, env))
+
+
 def resolve_url(p: Provider, env: dict[str, str]) -> str:
     if "{account_id}" not in p.url:
         return p.url
