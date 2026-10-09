@@ -6,8 +6,13 @@
 <title>ContextOS</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-<meta name="theme-color" content="#F4F2EC" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0A0B0F" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" id="themeColor" content="#F4F2EC">
+<script>/* pre-paint: apply saved theme before first render (no flash) */
+(function(){try{var t=localStorage.getItem('contextos.theme')||localStorage.getItem('theme');
+if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;
+var d=t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
+document.getElementById('themeColor').content=d?'#0B0C11':'#F4F2EC'}catch(e){}})();</script>
 <link rel="preload" href="/static/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/static/fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <style>
@@ -20,6 +25,7 @@
 @font-face{font-family:"Geist Mono";src:url(/static/fonts/geist-mono-latin-wght-normal.woff2) format("woff2");
   font-weight:100 900;font-display:swap}
 :root{
+  color-scheme:light;
   --bg:#F4F2EC; --surface:#FFFFFF; --sunken:#EAE7DE; --text:#0E0F13; --muted:#52576A; --border:#DAD6CA;
   --accent:#2431E8; --accent-ink:#FFFFFF; --danger:#B42318; --success:#0B6B3A; --warn:#8A5300;
   --user-bg:#E8E5DB; --code:#0d1117; --code-ink:#e6edf3;
@@ -37,14 +43,16 @@
   --warn-bg:#FBF3E4; --warn-line:#E8D3A8; --bad-bg:#FDF0EE; --bad-line:#F1C5BF;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0A0B0F; --surface:#12141A; --sunken:#07080B; --text:#ECEBE6; --muted:#9A9FAE; --border:#232630;
+  color-scheme:dark;
+  --bg:#0B0C11; --surface:#14161D; --sunken:#0F1116; --text:#ECEBE6; --muted:#9EA3B2; --border:#2B2F3B;
   --accent:#8797FF; --accent-ink:#0A0B0F; --danger:#FF8F84; --success:#6FD59A; --warn:#F0B35A;
-  --user-bg:#1A1D26; --faint:#8A8F9C; --warn-bg:#2b2112; --warn-line:#5c4424; --bad-bg:#2b1616; --bad-line:#5c2a2a;
+  --user-bg:#1D2029; --faint:#8F94A2; --warn-bg:#2b2112; --warn-line:#5c4424; --bad-bg:#2b1616; --bad-line:#5c2a2a;
   --shadow:0 16px 48px rgba(0,0,0,.6);}}
 :root[data-theme="dark"]{
-  --bg:#0A0B0F; --surface:#12141A; --sunken:#07080B; --text:#ECEBE6; --muted:#9A9FAE; --border:#232630;
+  color-scheme:dark;
+  --bg:#0B0C11; --surface:#14161D; --sunken:#0F1116; --text:#ECEBE6; --muted:#9EA3B2; --border:#2B2F3B;
   --accent:#8797FF; --accent-ink:#0A0B0F; --danger:#FF8F84; --success:#6FD59A; --warn:#F0B35A;
-  --user-bg:#1A1D26; --faint:#8A8F9C; --warn-bg:#2b2112; --warn-line:#5c4424; --bad-bg:#2b1616; --bad-line:#5c2a2a;
+  --user-bg:#1D2029; --faint:#8F94A2; --warn-bg:#2b2112; --warn-line:#5c4424; --bad-bg:#2b1616; --bad-line:#5c2a2a;
   --shadow:0 16px 48px rgba(0,0,0,.6);}
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -472,6 +480,22 @@ body.still ::view-transition-group(*),body.still ::view-transition-old(*),body.s
   .welcome{padding-top:5vh}
   .welcome h1{font-size:23px}
 }
+
+/* ---- theme control + touch polish ---- */
+#themeBtn .tlabel{font-size:12px;font-weight:550;letter-spacing:.01em}
+#themeBtn svg{transition:transform var(--dur-slow) var(--ease-emph)}
+#themeBtn:active svg{transform:rotate(25deg) scale(.9)}
+.sidefoot button:focus-visible,.iconbtn:focus-visible,.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (pointer:coarse){
+  .iconbtn,.sidefoot button{min-width:44px;min-height:44px;justify-content:center}
+  .seg button{min-height:36px;padding:6px 14px}
+}
+@media (max-width:760px){
+  .top{flex-wrap:wrap;row-gap:6px}
+  .top .title{flex:1 1 0}
+  #laneSeg{order:10;flex:1 0 100%}
+  #laneSeg button{flex:1}
+}
 </style>
 </head>
 <body>
@@ -499,6 +523,7 @@ body.still ::view-transition-group(*),body.still ::view-transition-old(*),body.s
   <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
   <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
 </svg>
 
@@ -523,8 +548,8 @@ body.still ::view-transition-group(*),body.still ::view-transition-old(*),body.s
         <svg class="icon"><use href="#i-plug"/></svg></button>
       <button id="stillBtn" title="Hold still: turn off all animation" aria-label="Hold still" aria-pressed="false">
         <svg class="icon"><use href="#i-pause"/></svg></button>
-      <button id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
-        <svg class="icon" id="themeIcon"><use href="#i-moon"/></svg></button>
+      <button id="themeBtn" title="Theme: System" aria-label="Theme: System. Activate to change">
+        <svg class="icon" id="themeIcon"><use href="#i-monitor"/></svg></button>
     </div>
   </aside>
   <div id="scrim"></div>
@@ -1327,11 +1352,22 @@ function download(href){
 }
 
 // ------------------------------------------------------------------ theme
+const THEMES = ['system','light','dark'];
+const THEME_META = {system:['monitor','System'], light:['sun','Light'], dark:['moon','Dark']};
+const osDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
 function applyTheme(t){
-  if(t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
-  const dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  $('#themeIcon').innerHTML = `<use href="#i-${dark ? 'sun' : 'moon'}"/>`;
+  t = THEMES.includes(t) ? t : 'system';
+  if(t === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const dark = t === 'system' ? osDark() : t === 'dark';
+  const [ic, name] = THEME_META[t];
+  $('#themeIcon').innerHTML = `<use href="#i-${ic}"/>`;
+  const next = THEME_META[THEMES[(THEMES.indexOf(t) + 1) % 3]][1];
+  $('#themeBtn').title = `Theme: ${name} (click for ${next})`;
+  $('#themeBtn').setAttribute('aria-label', `Theme: ${name}. Activate to switch to ${next}`);
+  const m = document.getElementById('themeColor'); if(m) m.content = dark ? '#0B0C11' : '#F4F2EC';
 }
+const curTheme = () => { const v = store.get('theme'); return THEMES.includes(v) ? v : 'system'; };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if(curTheme() === 'system') applyTheme('system'); });
 function applyStill(on){
   document.body.classList.toggle('still', on); $('#stillBtn').setAttribute('aria-pressed', String(on));
   $('#stillBtn').style.color = on ? 'var(--accent)' : '';
@@ -1342,9 +1378,8 @@ document.addEventListener('keydown', e => {
   if((e.ctrlKey || e.metaKey) && e.key === '.'){ e.preventDefault(); if(!inBuild()) $('#memBtn').click(); }
 });
 $('#themeBtn').onclick = async ev => {
-  const cur = document.documentElement.dataset.theme ||
-    (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  const next = cur === 'dark' ? 'light' : 'dark'; store.set('theme', next);
+  const next = THEMES[(THEMES.indexOf(curTheme()) + 1) % 3]; store.set('theme', next);
+  toast(`Theme: ${THEME_META[next][1]}`);
   if(!document.startViewTransition || stillNow()){ applyTheme(next); return; }
   const r = ev.currentTarget.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
   const rad = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
@@ -1844,7 +1879,7 @@ function wireKeyCard(card){
 
 // ------------------------------------------------------------------- boot
 (async function boot(){
-  applyTheme(store.get('theme'));
+  applyTheme(curTheme());
   setLane(store.get('lane') || 'auto');
   S.route = store.get('route') || '';
   await refreshState();
