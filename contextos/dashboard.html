@@ -563,6 +563,7 @@ body.still ::view-transition-group(*),body.still ::view-transition-old(*),body.s
         <button role="radio" data-lane="auto" aria-checked="true" title="Pick per message by difficulty">Auto</button>
         <button role="radio" data-lane="smart" aria-checked="false" title="Always the strongest free models">Smart</button>
         <button role="radio" data-lane="fast" aria-checked="false" title="Always the quickest models">Fast</button>
+        <button role="radio" data-lane="pipeline" aria-checked="false" title="Split the task into parts and give each to the free model that suits it, then merge">Pipeline</button>
       </div>
       <label class="sr" for="modelSel">Preferred model</label>
       <select class="model" id="modelSel" title="Try this model first"></select>
@@ -1109,6 +1110,21 @@ async function send(opts = {}){
         if(d.hidden){ d.hidden = false; d.open = true; }
         paint(); break;
       }
+      case 'pipeline_plan':
+        st.plan = ev.steps.map(x => ({...x, state:'wait'}));
+        el.querySelector('.notices').insertAdjacentHTML('beforeend',
+          `<div class="status pipe" style="margin:0 0 8px">Split into ${ev.steps.length} part${ev.steps.length === 1 ? '' : 's'}${ev.how === 'fallback' ? ' (simple split)' : ''}: `
+          + ev.steps.map(x => `<span data-step="${esc(x.id)}" title="${esc(x.task)}" style="font-family:var(--mono)">${esc(x.kind)}·${esc(x.lane)}</span>`).join(' → ') + '</div>');
+        break;
+      case 'step_start': case 'step_done': {
+        const chip = el.querySelector(`.pipe [data-step="${CSS.escape(ev.id)}"]`);
+        if(chip){ chip.style.color = ev.type === 'step_start' ? 'var(--accent)' : (ev.ok ? 'var(--good)' : 'var(--bad)');
+          if(ev.type === 'step_done' && ev.provider) chip.title += ` — ${ev.provider}`; }
+        el.querySelector('.status').innerHTML = `${MARK('mini working')}Pipeline: ${esc(ev.type === 'step_start' ? 'running ' + ev.id : ev.id + ' done by ' + (ev.provider || 'failed'))}`;
+        break;
+      }
+      case 'merge_start':
+        el.querySelector('.status').innerHTML = `${MARK('mini working')}Pipeline: merging results`; break;
       case 'delta': st.text += ev.text; paint(); break;
       case 'replace': st.text = ev.text; paint(); break;
       case 'reset': st.text = ''; st.think = ''; st.thinkStart = 0;

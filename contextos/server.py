@@ -137,6 +137,7 @@ class Engine:
         self._guard = threading.Lock()
         self.env = env
         self.offline = offline
+        self._test_pool = None
         self.budget = budget
         self.events: list[dict[str, Any]] = []
         self.forced_failures: set[str] = set()   # demo switch in the Providers panel
@@ -408,6 +409,10 @@ class Engine:
                     ctx.delete("/task/goal")
             user_msg_rec = self.chats.add(cid, "user", prompt)
 
+        pipe = lane == "pipeline" or prompt.lstrip().lower().startswith("/pipeline")
+        if pipe:
+            prompt = re.sub(r"^\s*/pipeline\b\s*", "", prompt, flags=re.I) or prompt
+            prompt = prompt.strip()
         forced, text_in = router.parse_override(prompt)
         conv = self.chats.get(cid)
         if conv["title"] == "New chat":
@@ -416,6 +421,10 @@ class Engine:
         yield {"type": "start", "conversation": {k: conv[k] for k in
                                                 ("id", "title", "created", "updated")},
                "user_message": user_msg_rec}
+
+        if pipe:
+            yield from self._pipeline_turn(cid, ctx, text_in, user_msg_rec)
+            return
 
         wanted = forced or (lane if lane in (router.SMART, router.FAST) else self.mode)
         decision = router.decide(text_in, wanted, self.threshold)
@@ -547,6 +556,56 @@ class Engine:
                            "omitted_units": len(selection.omitted)},
                 "ms": int((time.time() - t0) * 1000)}
         msg = self.chats.add(cid, "assistant", visible_text(raw), meta)
+        yield {"type": "done", "message": msg}
+
+    # ------------------------------------------------------------- pipeline
+    def _pool(self):
+        from .agent import ModelPool
+        pool = self._test_pool or ModelPool(self.env)
+        pool.cooldown = self.cooldown                  # share rested-model state
+        return pool
+
+    def _pipeline_turn(self, cid: str, ctx: ContextOS, text_in: str,
+                       user_msg_rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Split the prompt into subtasks, route each to a suitable free model, merge."""
+        from . import pipeline
+        pool = self._pool()
+        if not pool.ready():
+            yield {"type": "error", "error": "Pipeline mode needs at least one real model key."}
+            return
+        if not ctx.get("/task/goal"):
+            ctx.put("/task/goal", text_in[:400], kind="goal", importance=1.0,
+                    pinned=True, source="user")
+        context_text = render(ctx.select(text_in, budget_tokens=self.budget).units)
+        yield {"type": "route", "lane": "pipeline", "difficulty": router.score(text_in)[0],
+               "reasons": ["pipeline: split into subtasks"], "forced": True}
+        t0, final, meta_steps, who = time.time(), "", [], ""
+        ask = lambda lane, system, user: pool.ask(lane, system, user, max_tokens=2048)
+        for ev in pipeline.run(text_in, ask, context_text if context_text.strip() else ""):
+            if ev["type"] == "pipeline_error":
+                yield {"type": "error", "error": ev["error"]}
+                return
+            if ev["type"] == "pipeline_result":
+                final, who, meta_steps = ev["text"], ev["provider"], ev["steps"]
+                continue
+            yield ev
+        # Commit each subtask's conclusion as addressable state so a later model
+        # (or handoff) can fetch it by address instead of replaying the transcript.
+        written = []
+        addr = f"/task/pipeline/turn-{user_msg_rec['seq']}"
+        existed = ctx.get(addr) is not None
+        u = ctx.put(addr, final[:1500], kind="fact", source="pipeline", importance=0.7)
+        written.append({"address": u.address, "kind": u.kind, "value": u.value,
+                        "created": not existed})
+        meta = {"provider": who, "model": self._model(who) if who in PROVIDERS else who,
+                "lane_used": "pipeline", "lane": "pipeline", "difficulty": 0.0,
+                "reasons": ["pipeline"], "forced": True, "attempts": [], "switched": [],
+                "written": written, "pipeline": meta_steps, "context_sent": [],
+                "tokens": {"stored": ctx.stats()["live_tokens"],
+                           "sent": count_tokens(context_text), "omitted_units": 0},
+                "ms": int((time.time() - t0) * 1000)}
+        msg = self.chats.add(cid, "assistant", final, meta)
+        yield {"type": "delta", "text": final}
         yield {"type": "done", "message": msg}
 
     # ------------------------------------------------ non-streaming wrapper
