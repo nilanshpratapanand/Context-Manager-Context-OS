@@ -36,6 +36,7 @@ from . import router
 from .budget import render
 from .handoff import classify, should_migrate
 from .chats import ChatStore, title_from
+from . import attachments as attach
 from .tools import ToolError
 from .live import (FAST_ORDER, MODEL_ENV_OVERRIDE, PROVIDERS, SMART_ORDER,
                    ProviderError, load_env, stream_events, strip_reasoning)
@@ -138,6 +139,7 @@ class Engine:
         self.env = env
         self.offline = offline
         self._test_pool = None
+        self._test_describe = None
         self.budget = budget
         self.events: list[dict[str, Any]] = []
         self.forced_failures: set[str] = set()   # demo switch in the Providers panel
@@ -363,7 +365,8 @@ class Engine:
     def chat_stream(self, cid: Optional[str], prompt: str = "", *,
                     lane: Optional[str] = None, route: Optional[str] = None,
                     regenerate: Optional[str] = None,
-                    edit: Optional[str] = None) -> Iterator[dict[str, Any]]:
+                    edit: Optional[str] = None,
+                    attachments: Optional[list] = None) -> Iterator[dict[str, Any]]:
         """One turn as a stream of events for the UI.
 
         regenerate=<assistant message id> replaces that reply;
@@ -379,11 +382,19 @@ class Engine:
             cid = self.chats.create()["id"]
         ctx = self.ctx_for(cid)
         with self._locks[cid]:
-            yield from self._turn(cid, ctx, prompt, lane, route, regenerate, edit)
+            yield from self._turn(cid, ctx, prompt, lane, route, regenerate, edit, attachments)
 
     def _turn(self, cid: str, ctx: ContextOS, prompt: str, lane: Optional[str],
               route: Optional[str], regenerate: Optional[str],
-              edit: Optional[str]) -> Iterator[dict[str, Any]]:
+              edit: Optional[str], attachments: Optional[list] = None
+              ) -> Iterator[dict[str, Any]]:
+        atts: list[attach.Attachment] = []
+        if attachments and not regenerate:
+            try:
+                atts = attach.process(attachments, self._describer())
+            except attach.AttachmentError as e:
+                yield {"type": "error", "error": str(e)}
+                return
         if regenerate:
             self._undo(cid, self.chats.truncate_from(cid, regenerate))
             users = [m for m in self.chats.messages(cid) if m["role"] == "user"]
@@ -394,6 +405,8 @@ class Engine:
             prompt = user_msg_rec["content"]
         else:
             prompt = (prompt or "").strip()
+            if not prompt and atts:
+                prompt = "Summarize the attached file(s) and point out anything important."
             if not prompt:
                 yield {"type": "error", "error": "Empty message."}
                 return
@@ -407,7 +420,11 @@ class Engine:
                     if self.chats.get(cid)["title"] == title_from(old):
                         self.chats.rename(cid, "New chat")
                     ctx.delete("/task/goal")
-            user_msg_rec = self.chats.add(cid, "user", prompt)
+            user_msg_rec = self.chats.add(
+                cid, "user", prompt,
+                {"attachments": [a.public() for a in atts]} if atts else None)
+            for a in atts:        # durable, addressable, carried across model handoffs
+                ctx.put_artifact(a.address, a.name, a.text, source="user", importance=0.85)
 
         pipe = lane == "pipeline" or prompt.lstrip().lower().startswith("/pipeline")
         if pipe:
@@ -423,7 +440,7 @@ class Engine:
                "user_message": user_msg_rec}
 
         if pipe:
-            yield from self._pipeline_turn(cid, ctx, text_in, user_msg_rec)
+            yield from self._pipeline_turn(cid, ctx, text_in, user_msg_rec, attach.render(atts))
             return
 
         wanted = forced or (lane if lane in (router.SMART, router.FAST) else self.mode)
@@ -438,7 +455,9 @@ class Engine:
         recent = "\n".join(f"{m['role']}: {m['content'][:400]}" for m in history[-2:])
         selection = ctx.select(text_in, budget_tokens=self.budget)
         context_text = render(selection.units) or "(nothing on file yet)"
+        attach_text = attach.render(atts)
         user_msg = (f"## Context on file\n{context_text}\n\n"
+                    + (f"{attach_text}\n\n" if attach_text else "")
                     + (f"## Last exchange\n{recent}\n\n" if recent else "")
                     + f"## Now\n{text_in}")
 
@@ -507,6 +526,7 @@ class Engine:
                     # The packet carries the store; the last exchange is what the
                     # failed model was also given, so the new one must not lose it.
                     user_msg = (f"{packet.render()}\n\n"
+                                + (f"{attach_text}\n\n" if attach_text else "")
                                 + (f"## Last exchange\n{recent}\n\n" if recent else "")
                                 + f"## Now\n{text_in}")
                     sw = {"from": name, "to": nxt, "direction": direction,
@@ -559,6 +579,14 @@ class Engine:
         yield {"type": "done", "message": msg}
 
     # ------------------------------------------------------------- pipeline
+    def _describer(self):
+        if self._test_describe:
+            return self._test_describe
+        if self.offline:
+            return lambda mime, raw: f"[simulated description of a {mime} image, {len(raw)} bytes]"
+        from .live import _post
+        return attach.gemini_describer(self.env, _post)
+
     def _pool(self):
         from .agent import ModelPool
         pool = self._test_pool or ModelPool(self.env)
@@ -566,7 +594,8 @@ class Engine:
         return pool
 
     def _pipeline_turn(self, cid: str, ctx: ContextOS, text_in: str,
-                       user_msg_rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
+                       user_msg_rec: dict[str, Any], extra: str = ""
+                       ) -> Iterator[dict[str, Any]]:
         """Split the prompt into subtasks, route each to a suitable free model, merge."""
         from . import pipeline
         pool = self._pool()
@@ -577,6 +606,8 @@ class Engine:
             ctx.put("/task/goal", text_in[:400], kind="goal", importance=1.0,
                     pinned=True, source="user")
         context_text = render(ctx.select(text_in, budget_tokens=self.budget).units)
+        if extra:
+            context_text = f"{context_text}\n\n{extra}".strip()
         yield {"type": "route", "lane": "pipeline", "difficulty": router.score(text_in)[0],
                "reasons": ["pipeline: split into subtasks"], "forced": True}
         t0, final, meta_steps, who = time.time(), "", [], ""
@@ -875,6 +906,9 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if not n:
             return {}
+        if n > 32 * 1024 * 1024:              # uploads are capped per file; this caps the request
+            self.rfile.read(0)
+            return {"_too_large": True}
         try:
             data = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
             return data if isinstance(data, dict) else {}
@@ -1099,7 +1133,8 @@ class Handler(BaseHTTPRequestHandler):
         gen = self.engine.chat_stream(
             body.get("conversation_id") or None, str(body.get("prompt") or ""),
             lane=body.get("lane"), route=body.get("route"),
-            regenerate=body.get("regenerate"), edit=body.get("edit"))
+            regenerate=body.get("regenerate"), edit=body.get("edit"),
+            attachments=body.get("attachments"))
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
