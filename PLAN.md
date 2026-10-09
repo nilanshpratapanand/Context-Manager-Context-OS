@@ -16,11 +16,11 @@ Findings that bear directly on this project:
 
 | Finding | Number | Consequence for ContextOS |
 |---|---|---|
-| Raw full-trajectory handoff, escalation (weak→strong) | recovers only **47%** (Claude) / **36%** (GPT) of the quality gap, at **4.0×** / **6.1×** the cost | "Never lose context" — passing everything — is the **worst** interface. |
+| Raw full-trajectory handoff, escalation (weak→strong) | recovers only **47%** (Claude) / **36%** (GPT) of the quality gap, at **4.0×** / **6.1×** the cost of an LC-only run | "Never lose context" — passing everything — is the **worst** interface. |
 | `traj-drop` (discard trajectory, keep **working-tree edits**) | recovers **64%** (Claude) / **84%** (GPT) | Dropping the conversation but keeping durable artifacts is the best escalation interface. |
-| `compact_pre` (outgoing model summarizes before handoff) | cost $1.61 → $0.75, quality 47% → 60% | State should be committed **by the departing agent, at write time**. |
+| `compact_pre` (outgoing model summarizes before handoff; Claude) | cost $1.61 → $0.75, quality 47% → 60% | State should be committed **by the departing agent, at write time**. |
 | Downshift (strong→weak) with trajectory removed | drops to **28%** (Claude) / **53%** (GPT) vs 50–79% with trajectory intact | The correct packet is **direction-dependent**. One format is wrong. |
-| Carrying a weak model's trajectory into a strong model | each post-handoff step costs **2.2×** (Claude) / **1.6×** (GPT) more | Trajectory is not just useless on escalation — it is actively expensive. |
+| Carrying a weak model's trajectory into a strong model | each post-handoff step costs **2.2×** (Claude) / **1.6×** (GPT) more than with compact_pre | Trajectory is not just useless on escalation — it is actively expensive. |
 | On easy tasks, all escalation interfaces underperform | — | Migration must be **difficulty-gated**, not fired on every quota error. |
 | For Claude escalation, restarting from scratch beat continuing | — | Honest baseline. ContextOS must beat *restart*, not just *raw handoff*. |
 
@@ -35,9 +35,9 @@ Findings that bear directly on this project:
 ### 1.3 Prior art — and the gap
 | System | What it is | Benchmarks | Cross-model handoff? |
 |---|---|---|---|
-| MemGPT / Letta (2310.08560) | OS-style memory hierarchy: main context (RAM) vs external context (disk), paged by function calls under memory-pressure warnings. 32.1% → 92.5% on deep memory retrieval | DMR, doc QA | No |
-| Mem0 (2504.19413) | LLM extraction + ADD/UPDATE/DELETE/NOOP consolidation; graph variant. 7k vs 26k tokens; **92% p95 latency** cut | LOCOMO | No |
-| Zep / Graphiti (2501.13956) | Bi-temporal knowledge graph (episode / entity / community); `t_valid`,`t_invalid` invalidation; cosine + BM25 + BFS, then rerank. 94.8–98.2% DMR; 115k → **1.6k** tokens | DMR, LongMemEval | No |
+| MemGPT / Letta (2310.08560) | OS-style memory hierarchy: main context (RAM) vs external context (disk), paged by function calls under memory-pressure warnings. 32.1% → 92.5% on deep memory retrieval (GPT-4, Table 2) | DMR, doc QA | No |
+| Mem0 (2504.19413) | LLM extraction + ADD/UPDATE/DELETE/NOOP consolidation; graph variant. ~1.8k vs ~26k tokens per query (Table 2); **91% lower p95 latency** | LOCOMO | No |
+| Zep / Graphiti (2501.13956) | Bi-temporal knowledge graph (episode / entity / community); `t_valid`,`t_invalid` invalidation; cosine + BM25 + BFS, then rerank. 94.8% (gpt-4-turbo) / 98.2% (gpt-4o-mini) DMR; 115k → **1.6k** tokens (LongMemEval) | DMR, LongMemEval | No |
 
 **All three are conversational-memory systems, evaluated on conversational recall.**
 None targets agentic task handoff across models. LangGraph checkpoints persist state but

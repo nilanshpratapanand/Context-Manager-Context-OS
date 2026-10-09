@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional
 
 from . import ContextOS, router
 from .budget import render
-from .live import (FAST_ORDER, PROVIDERS, SMART_ORDER, ProviderError, complete,
+from .live import (usable, FAST_ORDER, PROVIDERS, SMART_ORDER, ProviderError, complete,
                    strip_reasoning)
 from .tools import Tool, ToolError, call_tool, clip
 
@@ -39,7 +39,7 @@ class ModelPool:
         self.env = env
         self.scripted = scripted                  # tests / offline: fn(lane, system, user)
         self.cooldown = router.Cooldown()
-        avail = lambda names: [n for n in names if PROVIDERS[n].available(env)]
+        avail = lambda names: [n for n in names if usable(PROVIDERS[n], env)]
         self.smart = avail(env.get("LLM_SMART_ORDER", "").split(",") if env.get("LLM_SMART_ORDER")
                            else SMART_ORDER)
         self.fast = avail(env.get("LLM_FAST_ORDER", "").split(",") if env.get("LLM_FAST_ORDER")

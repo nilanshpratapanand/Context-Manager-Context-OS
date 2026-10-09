@@ -16,9 +16,9 @@ on SWE-bench Verified with Claude Haiku 4.5 / Opus 4.7 and GPT-5.6 Luna / Sol:
 
 | Interface | Escalation (weak → strong) | Downshift (strong → weak) |
 |---|---|---|
-| Raw full trajectory | **47%** / 36% quality-gap recovery, at **4.0×** / 6.1× cost | 50–79% |
+| Raw full trajectory | **47%** / 36% quality-gap recovery, at **4.0×** / 6.1× the cost of an LC-only run | 50–79% |
 | `traj-drop` — no trajectory, working-tree edits kept | **64%** / **84%** | collapses to 28% / 53% |
-| `compact_pre` — departing model summarises first | cost $1.61 → $0.75, quality 47% → 60% | — |
+| `compact_pre` — departing model summarises first (Claude) | cost $1.61 → $0.75, quality 47% → 60% | — |
 
 Two things follow, and they are the whole design:
 
@@ -41,7 +41,7 @@ schema rather than one agent's idiom.
 |---|---|---|---|
 | MemGPT / Letta | OS-style paging between main and external context | DMR, doc QA | no |
 | Mem0 | LLM extraction + ADD/UPDATE/DELETE/NOOP consolidation | LOCOMO | no |
-| Zep / Graphiti | bi-temporal knowledge graph, 115k → 1.6k tokens | DMR, LongMemEval | no |
+| Zep / Graphiti | bi-temporal knowledge graph, 115k → 1.6k tokens (LongMemEval context) | DMR, LongMemEval | no |
 
 All three solve conversational recall and are measured on it. ContextOS borrows Zep's
 bi-temporal invalidation and Mem0's NOOP-on-identical-write, and points them at a
@@ -142,6 +142,36 @@ escalate/downshift handoff. Settings: [CONFIGURATION.md](CONFIGURATION.md#routin
 
 ---
 
+## Pipeline mode, attachments, local-only
+
+**Pipeline mode** (`/pipeline <prompt>` or the Pipeline lane) splits one prompt into at most
+six subtasks, routes each to the lane that suits it, runs independent ones in parallel and
+merges. It is a composition of published ideas, not a new result:
+
+| Idea | Source | Used for |
+|---|---|---|
+| Plan, run in parallel, join | LLMCompiler, Kim et al., arXiv 2312.04511: up to 3.7x lower latency than ReAct | dependency waves; independent subtasks run concurrently |
+| Send easy work to cheap models | FrugalGPT, Chen, Zaharia, Zou, arXiv 2305.05176: up to 98% cost cut at GPT-4 quality; RouteLLM, Ong et al., arXiv 2406.18665: over 2x cost cut in some settings | `extract/summarize/format` go to the fast lane; `reason/code/math/write` to the smart lane. Here the cost is free-tier quota |
+| One aggregator reads several outputs | Mixture-of-Agents, Wang et al., arXiv 2406.04692: open-model MoA 65.1% vs GPT-4o 57.5% on AlpacaEval 2.0 | the merge step |
+
+Each worker sees only the outputs of the subtasks it depends on, never the transcript: the
+same carry-state-not-trajectory rule as the handoff packet. The numbers above are the papers'
+own and were measured in their settings. They have **not** been reproduced on ContextOS, and
+Pipeline mode has no benchmark yet; the tests check routing, ordering and failure handling
+with scripted models, not answer quality. A bad planner reply falls back to a deterministic
+split, and a failed subtask is reported rather than hidden.
+
+**Attachments** are converted to text once, stored as `/artifact/uploads/...` (path + sha256,
+D4) and carried like any other state, so an image described by one vision model is usable by
+every other model in the pool. Images need a free Gemini key; PDFs need the optional `pypdf`
+package; everything else is decoded directly. Files are capped (4 per message, 6 MB each,
+24k characters kept) and fenced as data the model must not obey.
+
+**Local-only mode** (`LLM_LOCAL_ONLY=1`) restricts routing to models served on this machine
+(Ollama) and disables cloud image description, so nothing leaves the computer.
+
+---
+
 ## Live cross-model evaluation
 
 `bench.py` measures state sufficiency — a necessary condition, offline. `live.py`
@@ -221,4 +251,5 @@ These are spot checks, not a benchmark.
 - [MemGPT: Towards LLMs as Operating Systems](https://arxiv.org/abs/2310.08560) — arXiv 2310.08560
 - [Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory](https://arxiv.org/abs/2504.19413) — arXiv 2504.19413
 - [Zep: A Temporal Knowledge Graph Architecture for Agent Memory](https://arxiv.org/abs/2501.13956) — arXiv 2501.13956
+- [LLMCompiler](https://arxiv.org/abs/2312.04511), [FrugalGPT](https://arxiv.org/abs/2305.05176), [RouteLLM](https://arxiv.org/abs/2406.18665), [Mixture-of-Agents](https://arxiv.org/abs/2406.04692)
 - [Model Context Protocol specification 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
