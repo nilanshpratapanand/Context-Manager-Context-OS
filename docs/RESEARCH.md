@@ -16,9 +16,9 @@ on SWE-bench Verified with Claude Haiku 4.5 / Opus 4.7 and GPT-5.6 Luna / Sol:
 
 | Interface | Escalation (weak → strong) | Downshift (strong → weak) |
 |---|---|---|
-| Raw full trajectory | **47%** / 36% quality-gap recovery, at **4.0×** / 6.1× cost | 50–79% |
+| Raw full trajectory | **47%** / 36% quality-gap recovery, at **4.0×** / 6.1× the cost of an LC-only run | 50–79% |
 | `traj-drop` — no trajectory, working-tree edits kept | **64%** / **84%** | collapses to 28% / 53% |
-| `compact_pre` — departing model summarises first | cost $1.61 → $0.75, quality 47% → 60% | — |
+| `compact_pre` — departing model summarises first (Claude) | cost $1.61 → $0.75, quality 47% → 60% | — |
 
 Two things follow, and they are the whole design:
 
@@ -41,7 +41,7 @@ schema rather than one agent's idiom.
 |---|---|---|---|
 | MemGPT / Letta | OS-style paging between main and external context | DMR, doc QA | no |
 | Mem0 | LLM extraction + ADD/UPDATE/DELETE/NOOP consolidation | LOCOMO | no |
-| Zep / Graphiti | bi-temporal knowledge graph, 115k → 1.6k tokens | DMR, LongMemEval | no |
+| Zep / Graphiti | bi-temporal knowledge graph, 115k → 1.6k tokens (LongMemEval context) | DMR, LongMemEval | no |
 
 All three solve conversational recall and are measured on it. ContextOS borrows Zep's
 bi-temporal invalidation and Mem0's NOOP-on-identical-write, and points them at a
